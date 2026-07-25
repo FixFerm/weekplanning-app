@@ -456,7 +456,8 @@ function tekenDag() {
     links.appendChild(el("div", "hint", "Deze dingen moeten deze week gebeuren, maar hebben nog geen dag."));
   } else {
     links.appendChild(el("h2", null, `${hoofdletter(dagnaamVan(DAG))} ${datumNl(DAG)}`));
-    if (DAG === vandaagIso()) links.appendChild(el("div", "hint", "vandaag"));
+    links.appendChild(el("div", "hint",
+      (DAG === vandaagIso() ? "vandaag — " : "") + "tik op een regel om er iets bij te typen, te verplaatsen, uit te stellen of af te melden"));
   }
   kop.appendChild(links);
   vak.appendChild(kop);
@@ -508,12 +509,14 @@ function tekenWeekraster() {
 function tekenRegel(it, dagSleutel, klein) {
   const r = el("div", `regel soort-${it.soort}${it.klaar ? " klaar" : ""}${it.telaat ? " telaat" : ""}`);
 
-  // In de hele-week-stand is er geen ruimte voor knopjes: daar tik je op de regel zelf
-  // en kies je in het venstertje wat je wilt doen.
-  if (klein) {
-    r.classList.add("tikbaar");
-    r.onclick = () => toonItemPaneel(it, dagSleutel);
-  } else {
+  // Op de regel zelf tikken opent het venstertje met alles wat je ermee kunt doen.
+  // Het vinkje en de kopieerknop hebben hun eigen actie en houden die voor zich.
+  r.classList.add("tikbaar");
+  r.onclick = (e) => {
+    if (e.target.closest("button")) return;
+    toonItemPaneel(it, dagSleutel);
+  };
+  if (!klein) {
     const vink = el("button", "vinkje", it.klaar ? "✓" : "");
     vink.title = it.klaar ? "Weer openzetten" : "Afvinken";
     vink.onclick = () => (it.klaar ? heropen(it) : vinkAf(it, dagSleutel));
@@ -560,8 +563,8 @@ function tekenRegel(it, dagSleutel, klein) {
   r.appendChild(midden);
 
   if (!klein) {
-    const meer = el("button", "meer", "⋯");
-    meer.title = "Meer";
+    const meer = el("button", "knop grijs klein wijzig", "Wijzigen");
+    meer.title = "Reactie erbij, verplaatsen, uitstellen of afmelden";
     meer.onclick = () => toonItemPaneel(it, dagSleutel);
     r.appendChild(meer);
   }
@@ -674,10 +677,10 @@ function toonItemPaneel(it, dagSleutel) {
   };
 
   if (!it.klaar) rij("Afvinken", () => vinkAf(it, dagSleutel), "");
-  rij("Reactie erbij zetten", () => vraagReactie(it, dagSleutel));
+  rij("Tekst erbij typen", () => vraagReactie(it, dagSleutel));
   rij("Iets inspreken hierover", () => vraagMemo(it));
-  rij("Naar een andere dag", () => vraagVerschuiven(it, dagSleutel));
-  if (!it.klaar && it.soort === "taak") rij("Afmelden (gaat niet gebeuren)", () => afmelden(it, dagSleutel));
+  rij("Verplaatsen of uitstellen", () => vraagVerschuiven(it, dagSleutel));
+  if (!it.klaar) rij("Afmelden (gaat niet gebeuren)", () => afmelden(it, dagSleutel));
 
   paneel(it.tekst, it.tijd ? "staat om " + it.tijd : (it.soort === "vast" ? "hoort bij je vaste week" : ""), vak, []);
 }
@@ -703,7 +706,7 @@ function vraagVerschuiven(it, dagSleutel) {
   knoppen.appendChild(volgende);
   vak.appendChild(knoppen);
   vak.appendChild(el("p", null, "Een afgesproken uiterlijke datum blijft staan; die verandert hier niet."));
-  paneel("Verschuiven", it.tekst, vak, []);
+  paneel("Verplaatsen of uitstellen", it.tekst, vak, []);
 }
 
 async function verschuif(it, vanSleutel, naarSleutel) {
@@ -739,12 +742,12 @@ function afmelden(it, dagSleutel) {
 
 function vraagReactie(it, dagSleutel) {
   const vak = el("div");
-  vak.appendChild(el("label", null, "Wat wil je hierbij vastleggen?"));
+  vak.appendChild(el("label", null, "Wat wil je hierbij zetten?"));
   const invoer = el("textarea");
   invoer.placeholder = "Bijvoorbeeld: Roel heeft gebeld, hij gaat akkoord met twee kamers.";
   vak.appendChild(invoer);
   vak.appendChild(el("p", null, "Dit komt bij deze taak te staan, en bij de relatie in het dossier als die te herkennen is."));
-  const dlg = paneel("Reactie", it.tekst, vak, [{
+  const dlg = paneel("Tekst erbij typen", it.tekst, vak, [{
     tekst: "Bewaren", stijl: "", sluit: false, doe: async () => {
       const tekst = invoer.value.trim();
       if (!tekst) { meld("Er staat nog niets in."); return; }

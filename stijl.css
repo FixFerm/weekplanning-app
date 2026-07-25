@@ -210,6 +210,10 @@ h1, h2, h3 { color: var(--kop); margin: 0; }
   min-height: 34px;
 }
 
+.knop.wijzig { flex: 0 0 auto; align-self: flex-start; }
+.regel.tikbaar { cursor: pointer; }
+.regel.tikbaar:hover { border-color: var(--oranje); }
+
 .meer {
   flex: 0 0 auto;
   background: transparent;
