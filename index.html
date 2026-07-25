@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Weekplanning — FixFerm</title>
+  <meta name="theme-color" content="#1D2D44" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icoon-192.png" />
+  <link rel="icon" href="icoon-192.png" />
+  <link rel="stylesheet" href="stijl.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="balk">
+      <div>
+        <h1 id="titel">Weekplanning</h1>
+        <div class="weekregel" id="weekregel">even geduld…</div>
+      </div>
+      <div class="balk-rechts" id="balkknoppen"></div>
+    </header>
+
+    <div id="seintjes"></div>
+    <nav class="dagchips" id="dagchips"></nav>
+    <main id="inhoud"></main>
+  </div>
+
+  <button class="plusknop" id="plusknop" hidden>+</button>
+  <div class="voet" id="voet" hidden></div>
+
+  <dialog id="paneel"></dialog>
+
+  <script src="vendor/qr.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

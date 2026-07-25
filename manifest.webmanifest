@@ -1,0 +1,16 @@
+{
+  "name": "FixFerm weekplanning",
+  "short_name": "Weekplanning",
+  "description": "Je week per dag: afspraken, vaste punten en taken. Met reageren en inspreken onderweg.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1D2D44",
+  "theme_color": "#1D2D44",
+  "icons": [
+    { "src": "./icoon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icoon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "./icoon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
