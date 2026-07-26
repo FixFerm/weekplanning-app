@@ -218,12 +218,12 @@ h1, h2, h3 { color: var(--kop); margin: 0; }
 .bewerk { display: flex; flex-direction: column; gap: 8px; }
 .bewerkrij { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .bewerkrij .hint { font-size: 13px; color: var(--zacht); flex: 1 1 100%; }
-.veld-tijd { width: 118px; min-height: 42px; }
-.veld-duur { width: 108px; min-height: 42px; }
-.veld-wat { flex: 1 1 220px; min-height: 42px; }
-.veld-datum { width: 170px; min-height: 42px; }
-.veld-reactie { min-height: 42px; }
-.veld-erbij { min-height: 64px; }
+.regel .bewerkrij input.veld-tijd { width: 120px; flex: 0 0 auto; min-height: 42px; }
+.regel .bewerkrij select.veld-duur { width: 112px; flex: 0 0 auto; min-height: 42px; }
+.regel .bewerkrij input.veld-wat { flex: 1 1 220px; width: auto; min-height: 42px; }
+.regel .bewerkrij input.veld-datum { width: 175px; flex: 0 0 auto; min-height: 42px; }
+.regel .reactie input.veld-reactie { min-height: 42px; }
+.regel .bewerk textarea.veld-erbij { min-height: 64px; }
 .reactie .bewerkrij { margin-top: 6px; }
 
 /* Op een telefoonscherm is er geen ruimte voor een knop naast de tekst: dan gaat hij
@@ -235,8 +235,9 @@ h1, h2, h3 { color: var(--kop); margin: 0; }
   .regel > .midden { order: 1; flex: 1 1 100%; }
   .regel > .acties { order: 2; flex: 1 1 100%; }
   .acties .knop { flex: 1 1 auto; min-height: 44px; font-size: 14px; }
-  .veld-tijd, .veld-duur { flex: 1 1 40%; width: auto; }
-  .veld-wat { flex: 1 1 100%; }
+  .regel .bewerkrij input.veld-tijd,
+  .regel .bewerkrij select.veld-duur { flex: 1 1 40%; width: auto; }
+  .regel .bewerkrij input.veld-wat { flex: 1 1 100%; }
 }
 .regel.tikbaar { cursor: pointer; }
 .regel.tikbaar:hover { border-color: var(--oranje); }
