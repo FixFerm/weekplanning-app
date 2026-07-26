@@ -211,6 +211,15 @@ h1, h2, h3 { color: var(--kop); margin: 0; }
 }
 
 .knop.wijzig { flex: 0 0 auto; align-self: flex-start; }
+
+/* Op een telefoonscherm is er geen ruimte voor een knop naast de tekst: dan gaat hij
+   onder de tekst staan, zodat de tekst de volle breedte houdt. */
+@media (max-width: 700px) {
+  .regel { flex-wrap: wrap; }
+  .midden { flex: 1 1 100%; order: 2; }
+  .vinkje { order: 1; }
+  .knop.wijzig { order: 3; margin-left: auto; }
+}
 .regel.tikbaar { cursor: pointer; }
 .regel.tikbaar:hover { border-color: var(--oranje); }
 
