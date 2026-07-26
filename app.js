@@ -1221,7 +1221,66 @@ async function toonQr() {
   uitleg.appendChild(stappen);
   uitleg.appendChild(el("p", null,
     `Hierin zit de hele week: ${tellingVanPlan()}. Er gaat niets naar internet; wat achter het hekje in het adres staat leest je telefoon zelf.`));
-  uitleg.appendChild(el("p", null, "Adres van de telefoon-app: " + STAND.telefoon_adres));
+  // Kan de telefoon geen code scannen (geen camera, of hij wil niet)? Dan zijn er twee
+  // wegen zonder scannen. Het webadres is kort genoeg om over te typen; de link mét je
+  // week is dat niet (ruim duizend tekens), dus die stuur je naar jezelf.
+  const zonder = el("div", "zonder-scannen");
+  zonder.appendChild(el("strong", null, "Kan je telefoon niet scannen?"));
+  const stappen2 = el("ol");
+  const li1 = el("li");
+  li1.appendChild(document.createTextNode("Typ dit adres in de browser van je telefoon: "));
+  li1.appendChild(el("strong", null, STAND.telefoon_adres.replace(/^https?:\/\//, "")));
+  li1.appendChild(document.createTextNode(" — dan heb je de app (en kun je hem op je beginscherm zetten)."));
+  stappen2.appendChild(li1);
+  stappen2.appendChild(el("li", null,
+    "Voor de week zelf: kopieer hieronder de link en stuur die naar jezelf (WhatsApp, mail). "
+    + "Tik hem op je telefoon aan en je week staat erop. Die link is te lang om te typen."));
+  zonder.appendChild(stappen2);
+
+  const kopieerrij = el("div", "knoppenrij");
+  // De link komt altijd óók in beeld te staan, alvast geselecteerd. Kopiëren via de knop
+  // werkt meestal, maar niet in elke browser; dan kun je hem gewoon met Cmd+C pakken.
+  const linkvak = el("textarea", "linkvak");
+  linkvak.readOnly = true;
+  linkvak.hidden = true;
+  const kopieerLink = el("button", "knop grijs klein",
+    STAND.qr.delen > 1 ? "Laat de link zien van de code die je nu ziet" : "Laat de link zien (en kopieer hem)");
+  kopieerLink.onclick = () => {
+    const url = STAND.qr.urls[deel];
+    linkvak.value = url;
+    linkvak.hidden = false;
+    linkvak.focus();
+    linkvak.select();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(
+        () => meld("De link staat op je klembord. Stuur hem naar jezelf en tik hem op je telefoon aan.", "goed"),
+        () => meld("De link staat hieronder klaar en is geselecteerd: kopieer hem met Cmd + C."),
+      );
+    } else {
+      meld("De link staat hieronder klaar en is geselecteerd: kopieer hem met Cmd + C.");
+    }
+  };
+  kopieerrij.appendChild(kopieerLink);
+  const kopieerAdres = el("button", "knop grijs klein", "Laat alleen het webadres zien");
+  kopieerAdres.onclick = () => {
+    linkvak.value = STAND.telefoon_adres;
+    linkvak.hidden = false;
+    linkvak.focus();
+    linkvak.select();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(STAND.telefoon_adres).then(
+        () => meld("Het webadres staat op je klembord.", "goed"),
+        () => meld("Het adres staat hieronder klaar en is geselecteerd."),
+      );
+    } else {
+      meld("Het adres staat hieronder klaar en is geselecteerd.");
+    }
+  };
+  kopieerrij.appendChild(kopieerAdres);
+  zonder.appendChild(kopieerrij);
+  zonder.appendChild(linkvak);
+  uitleg.appendChild(zonder);
+
   const anders = el("button", "knop grijs klein", "Ander webadres");
   anders.onclick = () => { $("paneel").close(); vraagAdres(); };
   uitleg.appendChild(anders);

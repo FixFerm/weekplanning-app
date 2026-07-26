@@ -385,6 +385,23 @@ textarea { min-height: 110px; resize: vertical; }
 .qr-plaatje svg { width: min(340px, 78vw); height: auto; display: block; }
 .qr-uitleg { flex: 1 1 260px; font-size: 14px; }
 .qr-uitleg ol { padding-left: 20px; margin: 0 0 10px; }
+.zonder-scannen {
+  margin: 14px 0 10px;
+  padding: 12px 14px;
+  background: var(--band);
+  border: 1px solid var(--kaart-rand);
+  border-radius: 12px;
+}
+.zonder-scannen strong { color: var(--kop); display: block; margin-bottom: 6px; }
+.zonder-scannen ol { margin: 0 0 10px; }
+.knoppenrij { display: flex; gap: 8px; flex-wrap: wrap; }
+.zonder-scannen textarea.linkvak {
+  margin-top: 10px;
+  min-height: 70px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
 .qr-uitleg li { margin-bottom: 5px; }
 
 /* ---------- onderbalk op de telefoon ---------- */
