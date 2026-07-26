@@ -208,6 +208,7 @@ function grootItem(k) {
     id: k.i, tekst: k.t, tijd: k.u || "",
     soort: SOORT_LANG[k.s || "t"] || "extra",
     wie: k.w || "", uiterlijk: k.x || "", typ: k.c || "",
+    duur: k.n || 0,
     klaar: k.k ? vandaagIso() : "", telaat: !!k.l,
     reacties: [],
   };
@@ -667,22 +668,138 @@ async function heropen(it) {
 
 function toonItemPaneel(it, dagSleutel) {
   const vak = el("div");
-  vak.appendChild(el("label", null, "Wat wil je hiermee doen?"));
+  const staatOp = dagSleutel === "vrij" ? "" : dagSleutel;
 
+  // ---- wat het is ----
+  vak.appendChild(el("label", null, "Wat"));
+  const watIn = el("input");
+  watIn.type = "text";
+  watIn.value = it.tekst;
+  vak.appendChild(watIn);
+
+  // ---- welke dag ----
+  vak.appendChild(el("label", null, "Dag"));
+  const dagRij = el("div", "rij");
+  const dagIn = el("input");
+  dagIn.type = "date";
+  dagIn.value = staatOp;
+  dagIn.style.flex = "1 1 190px";
+  dagRij.appendChild(dagIn);
+  const geenDag = el("button", "knop grijs klein", "Nog geen dag");
+  geenDag.onclick = () => { dagIn.value = ""; meld("Deze komt bij \"nog geen dag\" te staan."); };
+  dagRij.appendChild(geenDag);
+  vak.appendChild(dagRij);
+
+  // ---- hoe laat ----
+  vak.appendChild(el("label", null, "Hoe laat"));
+  const tijdRij = el("div", "rij");
+  const tijdIn = el("input");
+  tijdIn.type = "time";
+  tijdIn.value = it.tijd || "";
+  tijdIn.style.flex = "1 1 130px";
+  tijdRij.appendChild(tijdIn);
+  const schuif = (minuten, tekst) => {
+    const b = el("button", "knop grijs klein", tekst);
+    b.onclick = () => { tijdIn.value = tijdPlus(tijdIn.value, minuten); };
+    tijdRij.appendChild(b);
+  };
+  schuif(-30, "− 30 min");
+  schuif(30, "+ 30 min");
+  schuif(60, "+ 1 uur");
+  const geenTijd = el("button", "knop grijs klein", "Geen tijd");
+  geenTijd.onclick = () => { tijdIn.value = ""; };
+  tijdRij.appendChild(geenTijd);
+  vak.appendChild(tijdRij);
+
+  // ---- hoe lang (voor je agenda) ----
+  vak.appendChild(el("label", null, "Hoe lang (voor je agenda)"));
+  const duurIn = el("select");
+  for (const [waarde, naam] of [[15, "kwartier"], [30, "half uur"], [45, "drie kwartier"],
+    [60, "een uur"], [90, "anderhalf uur"], [120, "twee uur"], [240, "vier uur"]]) {
+    const o = el("option", null, naam);
+    o.value = String(waarde);
+    if ((it.duur || 30) === waarde) o.selected = true;
+    duurIn.appendChild(o);
+  }
+  vak.appendChild(duurIn);
+
+  const dlg = paneel(
+    "Wijzigen",
+    it.soort === "afspraak" ? "kwam uit je agenda" : (it.soort === "vast" ? "hoort bij je vaste week" : ""),
+    vak,
+    [{
+      tekst: "Bewaren", stijl: "", sluit: false, doe: async () => {
+        const nieuweTekst = watIn.value.trim();
+        if (!nieuweTekst) { meld("Er moet wel iets staan."); return; }
+        const nieuweDag = dagIn.value || "vrij";
+        const nieuweTijd = tijdIn.value || "";
+        const nieuweDuur = parseInt(duurIn.value, 10) || 30;
+        const zelfde = nieuweTekst === it.tekst && nieuweTijd === (it.tijd || "")
+          && nieuweDuur === (it.duur || 30) && nieuweDag === (staatOp || "vrij");
+        dlg.close();
+        if (zelfde) { meld("Niets veranderd."); return; }
+        await wijzig(it, dagSleutel, {
+          tekst: nieuweTekst, tijd: nieuweTijd, duur: nieuweDuur, naar_dag: nieuweDag,
+        });
+      },
+    }],
+  );
+
+  // ---- en de dingen die je ermee kunt doen ----
+  const body = dlg.querySelector(".paneel-body");
+  const acties = el("div");
+  acties.appendChild(el("label", null, "Of doe er dit mee"));
   const rij = (tekst, doe, stijl) => {
     const b = el("button", "knop " + (stijl || "grijs"), tekst);
     b.style.width = "100%";
-    b.onclick = () => { $("paneel").close(); doe(); };
-    vak.appendChild(b);
+    b.onclick = () => { dlg.close(); doe(); };
+    acties.appendChild(b);
   };
-
-  if (!it.klaar) rij("Afvinken", () => vinkAf(it, dagSleutel), "");
+  if (!it.klaar) rij("Afvinken", () => vinkAf(it, dagSleutel));
   rij("Tekst erbij typen", () => vraagReactie(it, dagSleutel));
   rij("Iets inspreken hierover", () => vraagMemo(it));
-  rij("Verplaatsen of uitstellen", () => vraagVerschuiven(it, dagSleutel));
+  rij("Naar volgende week", () => verschuif(it, dagSleutel, plusDagen(PLAN.van, 7)));
   if (!it.klaar) rij("Afmelden (gaat niet gebeuren)", () => afmelden(it, dagSleutel));
+  body.insertBefore(acties, body.lastElementChild);
 
-  paneel(it.tekst, it.tijd ? "staat om " + it.tijd : (it.soort === "vast" ? "hoort bij je vaste week" : ""), vak, []);
+  setTimeout(() => watIn.focus(), 60);
+}
+
+/** Een tijd (HH:MM) een aantal minuten opschuiven. Leeg blijft leeg tenzij je optelt. */
+function tijdPlus(tijd, minuten) {
+  let basis = tijd;
+  if (!basis) basis = "09:00";
+  const [u, m] = basis.split(":").map(Number);
+  let totaal = u * 60 + m + minuten;
+  while (totaal < 0) totaal += 24 * 60;
+  totaal = totaal % (24 * 60);
+  return `${String(Math.floor(totaal / 60)).padStart(2, "0")}:${String(totaal % 60).padStart(2, "0")}`;
+}
+
+/** Een wijziging doorgeven: tekst, tijd, hoe lang en/of een andere dag. */
+async function wijzig(it, vanSleutel, velden) {
+  // meteen op het scherm bijwerken
+  it.tekst = velden.tekst;
+  it.tijd = velden.tijd;
+  it.duur = velden.duur;
+  const naar = velden.naar_dag;
+  const staatOp = vanSleutel === "vrij" ? "vrij" : vanSleutel;
+  if (naar !== staatOp) {
+    const bron = vanSleutel === "vrij" ? PLAN.vrij : (PLAN.dagen.find((d) => d.datum === vanSleutel)?.items || []);
+    const i = bron.indexOf(it);
+    if (i >= 0) bron.splice(i, 1);
+    if (naar === "vrij") (PLAN.vrij = PLAN.vrij || []).push(it);
+    else {
+      const doel = PLAN.dagen.find((d) => d.datum === naar);
+      if (doel) doel.items.push(it);
+    }
+    if (naar !== "vrij" && PLAN.dagen.some((d) => d.datum === naar)) DAG = naar;
+  }
+  await doeItems([{
+    id: nieuwId(), soort: "gewijzigd", taak_id: it.id, taak_tekst: it.tekst,
+    dag: staatOp === "vrij" ? PLAN.van : staatOp,
+    tekst: velden.tekst, tijd: velden.tijd, duur: velden.duur, naar_dag: naar,
+  }], "Bijgewerkt.");
 }
 
 function vraagVerschuiven(it, dagSleutel) {
