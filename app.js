@@ -25,6 +25,9 @@ let DAG = null;           // welke dag staat er open ("vrij" voor "nog geen dag"
 let HELEWEEK = false;     // hele week naast elkaar (breed scherm)
 let WACHTRIJ = [];        // telefoon: wat nog doorgestuurd moet worden
 let BEZIG = "";           // tekst van een klus die even duurt (agenda ophalen bijv.)
+// Welke regel staat open, en waarvoor: "bewerken", "dag", "annuleren" of "opnemen".
+// Alles gebeurt op de regel zelf; er wordt geen apart venster geopend.
+let OPEN = { id: null, modus: "" };
 
 // ---------- kleine hulpjes ----------
 
@@ -400,7 +403,12 @@ function tekenSeintjes() {
         [{ tekst: "/doc2md kopiëren", doe: () => kopieer("/doc2md") }]);
     }
     if (STAND.aandacht && STAND.aandacht.length) {
-      seintje(`${STAND.aandacht.length} ${STAND.aandacht.length === 1 ? "ding wacht" : "dingen wachten"} op jou: ingesproken memo's en reacties van onderweg.`,
+      const memos = STAND.aandacht.filter((a) => a.soort === "memo").length;
+      const rest = STAND.aandacht.length - memos;
+      const stukken = [];
+      if (memos) stukken.push(`${memos} ingesproken ${memos === 1 ? "memo" : "memo's"}`);
+      if (rest) stukken.push(`${rest} ${rest === 1 ? "tekst" : "teksten"} van je telefoon`);
+      seintje(`Van je telefoon meegekomen en nog niet afgehandeld: ${stukken.join(" en ")}.`,
         [{ tekst: "Bekijken", doe: toonAandacht }]);
     }
     if (STAND.plan && !STAND.plan.agenda_gelezen) {
@@ -458,7 +466,7 @@ function tekenDag() {
   } else {
     links.appendChild(el("h2", null, `${hoofdletter(dagnaamVan(DAG))} ${datumNl(DAG)}`));
     links.appendChild(el("div", "hint",
-      (DAG === vandaagIso() ? "vandaag — " : "") + "tik op een regel om er iets bij te typen, te verplaatsen, uit te stellen of af te melden"));
+      (DAG === vandaagIso() ? "vandaag · " : "") + "tik op een regel om de tijd of de tekst aan te passen of er tekst bij te typen"));
   }
   kop.appendChild(links);
   vak.appendChild(kop);
@@ -505,71 +513,6 @@ function tekenWeekraster() {
   }
   kolom("Nog geen dag", "deze week", PLAN.vrij || [], "vrij");
   vak.appendChild(raster);
-}
-
-function tekenRegel(it, dagSleutel, klein) {
-  const r = el("div", `regel soort-${it.soort}${it.klaar ? " klaar" : ""}${it.telaat ? " telaat" : ""}`);
-
-  // Op de regel zelf tikken opent het venstertje met alles wat je ermee kunt doen.
-  // Het vinkje en de kopieerknop hebben hun eigen actie en houden die voor zich.
-  r.classList.add("tikbaar");
-  r.onclick = (e) => {
-    if (e.target.closest("button")) return;
-    toonItemPaneel(it, dagSleutel);
-  };
-  if (!klein) {
-    const vink = el("button", "vinkje", it.klaar ? "✓" : "");
-    vink.title = it.klaar ? "Weer openzetten" : "Afvinken";
-    vink.onclick = () => (it.klaar ? heropen(it) : vinkAf(it, dagSleutel));
-    r.appendChild(vink);
-  }
-
-  const midden = el("div", "midden");
-  const tekst = el("div", "tekst");
-  if (it.tijd) tekst.appendChild(el("span", "tijd", it.tijd));
-  tekst.appendChild(document.createTextNode(it.tekst));
-  midden.appendChild(tekst);
-
-  const onder = el("div", "onder");
-  if (klein) {
-    // klein scherm: alleen wat je echt moet zien
-    if (it.telaat) onder.appendChild(el("span", "label oranje", "te laat"));
-    if (it.wie && it.wie.toLowerCase() !== "erik") onder.appendChild(el("span", "label", "wacht op " + it.wie));
-    if ((it.reacties || []).length) onder.appendChild(el("span", "label", `${it.reacties.length}× reactie`));
-  } else {
-    if (it.soort === "afspraak") onder.appendChild(el("span", "label agenda", "afspraak"));
-    if (it.soort === "vast") onder.appendChild(el("span", "label", "elke week"));
-    if (it.telaat) onder.appendChild(el("span", "label oranje", "over de datum"));
-    if (it.wie && it.wie.toLowerCase() !== "erik") onder.appendChild(el("span", "label", "wacht op " + it.wie));
-    if (it.uiterlijk) onder.appendChild(el("span", "label", "uiterlijk " + datumNl(it.uiterlijk)));
-    if (it.typ) {
-      const b = el("button", "commando", it.typ);
-      b.title = "Tik om te kopiëren";
-      b.onclick = () => kopieer(it.typ);
-      onder.appendChild(b);
-    }
-  }
-  if (onder.childElementCount) midden.appendChild(onder);
-
-  if (!klein && (it.reacties || []).length) {
-    const vak = el("div", "reacties");
-    for (const re of it.reacties) {
-      const d = el("div", "reactie");
-      d.appendChild(el("span", "wanneer", re.wanneer));
-      d.appendChild(document.createTextNode(re.tekst));
-      vak.appendChild(d);
-    }
-    midden.appendChild(vak);
-  }
-  r.appendChild(midden);
-
-  if (!klein) {
-    const meer = el("button", "knop grijs klein wijzig", "Wijzigen");
-    meer.title = "Reactie erbij, verplaatsen, uitstellen of afmelden";
-    meer.onclick = () => toonItemPaneel(it, dagSleutel);
-    r.appendChild(meer);
-  }
-  return r;
 }
 
 function tekenGeenPlan() {
@@ -625,6 +568,18 @@ function kopieer(tekst) {
  * Eén plek voor alle wijzigingen. Op de Mac gaan ze meteen naar het brein; op de
  * telefoon in de wachtrij, en we passen ze hier alvast toe zodat het scherm klopt.
  */
+/** Zelfde volgorde als op de Mac: eerst op tijd, dan afspraken/vaste punten/taken. */
+function sorteerDag(items) {
+  const rang = { afspraak: 0, vast: 1, taak: 2, extra: 3 };
+  items.sort((a, b) => {
+    if (!!a.klaar !== !!b.klaar) return a.klaar ? 1 : -1;
+    const ta = a.tijd || "", tb = b.tijd || "";
+    if (ta && tb && ta !== tb) return ta.localeCompare(tb);
+    if (!!ta !== !!tb) return ta ? -1 : 1;
+    return (rang[a.soort] ?? 9) - (rang[b.soort] ?? 9);
+  });
+}
+
 async function doeItems(items, meldingTekst) {
   if (MODUS === "mac") {
     const r = await fetch("/api/doe" + (PLAN ? "?van=" + PLAN.van : ""), {
@@ -639,6 +594,7 @@ async function doeItems(items, meldingTekst) {
     return;
   }
   for (const it of items) await zetInWachtrij(it);
+  for (const dag of PLAN.dagen) sorteerDag(dag.items);
   bewaarPlan(PLAN);
   teken();
   if (meldingTekst) meld(meldingTekst, "goed");
@@ -666,164 +622,333 @@ async function heropen(it) {
   meld("Weer open. Dit verandert taken.md niet; doe dat daar zelf als het nodig is.");
 }
 
-function toonItemPaneel(it, dagSleutel) {
-  const vak = el("div");
-  const staatOp = dagSleutel === "vrij" ? "" : dagSleutel;
+function tekenRegel(it, dagSleutel, klein) {
+  const r = el("div", `regel soort-${it.soort}${it.klaar ? " klaar" : ""}${it.telaat ? " telaat" : ""}`);
+  const open = OPEN.id === it.id ? OPEN.modus : "";
 
-  // ---- wat het is ----
-  vak.appendChild(el("label", null, "Wat"));
-  const watIn = el("input");
-  watIn.type = "text";
-  watIn.value = it.tekst;
-  vak.appendChild(watIn);
-
-  // ---- welke dag ----
-  vak.appendChild(el("label", null, "Dag"));
-  const dagRij = el("div", "rij");
-  const dagIn = el("input");
-  dagIn.type = "date";
-  dagIn.value = staatOp;
-  dagIn.style.flex = "1 1 190px";
-  dagRij.appendChild(dagIn);
-  const geenDag = el("button", "knop grijs klein", "Nog geen dag");
-  geenDag.onclick = () => { dagIn.value = ""; meld("Deze komt bij \"nog geen dag\" te staan."); };
-  dagRij.appendChild(geenDag);
-  vak.appendChild(dagRij);
-
-  // ---- hoe laat ----
-  vak.appendChild(el("label", null, "Hoe laat"));
-  const tijdRij = el("div", "rij");
-  const tijdIn = el("input");
-  tijdIn.type = "time";
-  tijdIn.value = it.tijd || "";
-  tijdIn.style.flex = "1 1 130px";
-  tijdRij.appendChild(tijdIn);
-  const schuif = (minuten, tekst) => {
-    const b = el("button", "knop grijs klein", tekst);
-    b.onclick = () => { tijdIn.value = tijdPlus(tijdIn.value, minuten); };
-    tijdRij.appendChild(b);
-  };
-  schuif(-30, "− 30 min");
-  schuif(30, "+ 30 min");
-  schuif(60, "+ 1 uur");
-  const geenTijd = el("button", "knop grijs klein", "Geen tijd");
-  geenTijd.onclick = () => { tijdIn.value = ""; };
-  tijdRij.appendChild(geenTijd);
-  vak.appendChild(tijdRij);
-
-  // ---- hoe lang (voor je agenda) ----
-  vak.appendChild(el("label", null, "Hoe lang (voor je agenda)"));
-  const duurIn = el("select");
-  for (const [waarde, naam] of [[15, "kwartier"], [30, "half uur"], [45, "drie kwartier"],
-    [60, "een uur"], [90, "anderhalf uur"], [120, "twee uur"], [240, "vier uur"]]) {
-    const o = el("option", null, naam);
-    o.value = String(waarde);
-    if ((it.duur || 30) === waarde) o.selected = true;
-    duurIn.appendChild(o);
+  // In de hele-week-stand zijn de kolommen te smal om in te typen: daar brengt een tik je
+  // naar die dag, en daar bewerk je de regel gewoon op zijn plek.
+  if (klein) {
+    r.classList.add("tikbaar");
+    r.onclick = () => { DAG = dagSleutel; HELEWEEK = false; OPEN = { id: it.id, modus: "bewerken" }; teken(); };
+    const midden = el("div", "midden");
+    const tekst = el("div", "tekst");
+    if (it.tijd) tekst.appendChild(el("span", "tijd", it.tijd));
+    tekst.appendChild(document.createTextNode(it.tekst));
+    midden.appendChild(tekst);
+    const onder = el("div", "onder");
+    if (it.telaat) onder.appendChild(el("span", "label oranje", "te laat"));
+    if (it.wie && it.wie.toLowerCase() !== "erik") onder.appendChild(el("span", "label", "wacht op " + it.wie));
+    if ((it.reacties || []).length) onder.appendChild(el("span", "label", `${it.reacties.length}× tekst erbij`));
+    if (onder.childElementCount) midden.appendChild(onder);
+    r.appendChild(midden);
+    return r;
   }
-  vak.appendChild(duurIn);
 
-  const dlg = paneel(
-    "Wijzigen",
-    it.soort === "afspraak" ? "kwam uit je agenda" : (it.soort === "vast" ? "hoort bij je vaste week" : ""),
-    vak,
-    [{
-      tekst: "Bewaren", stijl: "", sluit: false, doe: async () => {
-        const nieuweTekst = watIn.value.trim();
-        if (!nieuweTekst) { meld("Er moet wel iets staan."); return; }
-        const nieuweDag = dagIn.value || "vrij";
-        const nieuweTijd = tijdIn.value || "";
-        const nieuweDuur = parseInt(duurIn.value, 10) || 30;
-        const zelfde = nieuweTekst === it.tekst && nieuweTijd === (it.tijd || "")
-          && nieuweDuur === (it.duur || 30) && nieuweDag === (staatOp || "vrij");
-        dlg.close();
-        if (zelfde) { meld("Niets veranderd."); return; }
-        await wijzig(it, dagSleutel, {
-          tekst: nieuweTekst, tijd: nieuweTijd, duur: nieuweDuur, naar_dag: nieuweDag,
-        });
-      },
-    }],
-  );
+  const midden = el("div", "midden");
 
-  // ---- en de dingen die je ermee kunt doen ----
-  const body = dlg.querySelector(".paneel-body");
-  const acties = el("div");
-  acties.appendChild(el("label", null, "Of doe er dit mee"));
-  const rij = (tekst, doe, stijl) => {
-    const b = el("button", "knop " + (stijl || "grijs"), tekst);
-    b.style.width = "100%";
-    b.onclick = () => { dlg.close(); doe(); };
+  if (open === "bewerken") {
+    // ---------- bewerken op de regel zelf ----------
+    const bewerk = el("div", "bewerk");
+
+    const bovenrij = el("div", "bewerkrij");
+    const tijdIn = el("input");
+    tijdIn.type = "time";
+    tijdIn.value = it.tijd || "";
+    tijdIn.className = "veld-tijd";
+    tijdIn.title = "Hoe laat";
+    bovenrij.appendChild(tijdIn);
+
+    const duurIn = el("select");
+    duurIn.className = "veld-duur";
+    duurIn.title = "Hoe lang (voor je agenda)";
+    for (const [waarde, naam] of [[15, "15 min"], [30, "30 min"], [45, "45 min"],
+      [60, "1 uur"], [90, "1,5 uur"], [120, "2 uur"], [240, "4 uur"]]) {
+      const o = el("option", null, naam);
+      o.value = String(waarde);
+      if ((it.duur || 30) === waarde) o.selected = true;
+      duurIn.appendChild(o);
+    }
+    bovenrij.appendChild(duurIn);
+
+    const watIn = el("input");
+    watIn.type = "text";
+    watIn.value = it.tekst;
+    watIn.className = "veld-wat";
+    watIn.title = "Wat er moet gebeuren";
+    bovenrij.appendChild(watIn);
+    bewerk.appendChild(bovenrij);
+
+    // wat er al bij getypt of ingesproken is, met de mogelijkheid het te wijzigen
+    for (const re of it.reacties || []) {
+      bewerk.appendChild(tekenReactie(it, dagSleutel, re, true));
+    }
+
+    const erbij = el("textarea");
+    erbij.placeholder = "Tekst erbij typen (bijvoorbeeld: Roel gebeld, hij gaat akkoord)";
+    erbij.className = "veld-erbij";
+    bewerk.appendChild(erbij);
+
+    const knoppen = el("div", "bewerkrij");
+    const bewaar = el("button", "knop klein", "Bewaren");
+    bewaar.onclick = async () => {
+      const nieuweTekst = watIn.value.trim();
+      if (!nieuweTekst) { meld("Er moet wel iets staan."); return; }
+      const erbijTekst = erbij.value.trim();
+      OPEN = { id: null, modus: "" };
+      await bewaarRegel(it, dagSleutel, {
+        tekst: nieuweTekst, tijd: tijdIn.value || "", duur: parseInt(duurIn.value, 10) || 30,
+      }, erbijTekst);
+    };
+    knoppen.appendChild(bewaar);
+    const sluit = el("button", "knop grijs klein", "Sluiten");
+    sluit.onclick = () => { OPEN = { id: null, modus: "" }; teken(); };
+    knoppen.appendChild(sluit);
+    bewerk.appendChild(knoppen);
+
+    midden.appendChild(bewerk);
+    setTimeout(() => watIn.focus(), 40);
+  } else {
+    // ---------- gewone weergave ----------
+    r.classList.add("tikbaar");
+    r.onclick = (e) => {
+      if (e.target.closest("button") || e.target.closest("input") || e.target.closest("textarea")) return;
+      OPEN = { id: it.id, modus: "bewerken" };
+      teken();
+    };
+
+    const tekst = el("div", "tekst");
+    if (it.tijd) tekst.appendChild(el("span", "tijd", it.tijd));
+    tekst.appendChild(document.createTextNode(it.tekst));
+    midden.appendChild(tekst);
+
+    const onder = el("div", "onder");
+    if (it.soort === "afspraak") onder.appendChild(el("span", "label agenda", "afspraak"));
+    if (it.soort === "vast") onder.appendChild(el("span", "label", "elke week"));
+    if (it.telaat) onder.appendChild(el("span", "label oranje", "over de datum"));
+    if (it.wie && it.wie.toLowerCase() !== "erik") onder.appendChild(el("span", "label", "wacht op " + it.wie));
+    if (it.uiterlijk) onder.appendChild(el("span", "label", "uiterlijk " + datumNl(it.uiterlijk)));
+    if (it.duur && it.duur !== 30) onder.appendChild(el("span", "label", it.duur + " min"));
+    if (it.typ) {
+      const b = el("button", "commando", it.typ);
+      b.title = "Tik om te kopiëren";
+      b.onclick = () => kopieer(it.typ);
+      onder.appendChild(b);
+    }
+    if (onder.childElementCount) midden.appendChild(onder);
+
+    for (const re of it.reacties || []) {
+      midden.appendChild(tekenReactie(it, dagSleutel, re, false));
+    }
+  }
+
+  // ---------- wat je met deze regel kunt doen: op de regel, geen venster ----------
+  if (open === "dag") midden.appendChild(tekenDagkiezer(it, dagSleutel));
+  if (open === "annuleren") midden.appendChild(tekenAnnuleren(it, dagSleutel));
+  if (open === "opnemen") midden.appendChild(tekenOpnemen(it));
+
+  r.appendChild(midden);
+
+  const acties = el("div", "acties");
+  const actie = (tekst, doe, titel) => {
+    const b = el("button", "knop grijs klein", tekst);
+    if (titel) b.title = titel;
+    b.onclick = doe;
     acties.appendChild(b);
   };
-  if (!it.klaar) rij("Afvinken", () => vinkAf(it, dagSleutel));
-  rij("Tekst erbij typen", () => vraagReactie(it, dagSleutel));
-  rij("Iets inspreken hierover", () => vraagMemo(it));
-  rij("Naar volgende week", () => verschuif(it, dagSleutel, plusDagen(PLAN.van, 7)));
-  if (!it.klaar) rij("Afmelden (gaat niet gebeuren)", () => afmelden(it, dagSleutel));
-  body.insertBefore(acties, body.lastElementChild);
-
-  setTimeout(() => watIn.focus(), 60);
-}
-
-/** Een tijd (HH:MM) een aantal minuten opschuiven. Leeg blijft leeg tenzij je optelt. */
-function tijdPlus(tijd, minuten) {
-  let basis = tijd;
-  if (!basis) basis = "09:00";
-  const [u, m] = basis.split(":").map(Number);
-  let totaal = u * 60 + m + minuten;
-  while (totaal < 0) totaal += 24 * 60;
-  totaal = totaal % (24 * 60);
-  return `${String(Math.floor(totaal / 60)).padStart(2, "0")}:${String(totaal % 60).padStart(2, "0")}`;
-}
-
-/** Een wijziging doorgeven: tekst, tijd, hoe lang en/of een andere dag. */
-async function wijzig(it, vanSleutel, velden) {
-  // meteen op het scherm bijwerken
-  it.tekst = velden.tekst;
-  it.tijd = velden.tijd;
-  it.duur = velden.duur;
-  const naar = velden.naar_dag;
-  const staatOp = vanSleutel === "vrij" ? "vrij" : vanSleutel;
-  if (naar !== staatOp) {
-    const bron = vanSleutel === "vrij" ? PLAN.vrij : (PLAN.dagen.find((d) => d.datum === vanSleutel)?.items || []);
-    const i = bron.indexOf(it);
-    if (i >= 0) bron.splice(i, 1);
-    if (naar === "vrij") (PLAN.vrij = PLAN.vrij || []).push(it);
-    else {
-      const doel = PLAN.dagen.find((d) => d.datum === naar);
-      if (doel) doel.items.push(it);
-    }
-    if (naar !== "vrij" && PLAN.dagen.some((d) => d.datum === naar)) DAG = naar;
+  if (it.klaar) {
+    actie("Weer open", () => heropen(it), "Toch niet klaar");
+  } else {
+    actie("Klaar", () => vinkAf(it, dagSleutel), "Afgerond");
   }
-  await doeItems([{
-    id: nieuwId(), soort: "gewijzigd", taak_id: it.id, taak_tekst: it.tekst,
-    dag: staatOp === "vrij" ? PLAN.van : staatOp,
-    tekst: velden.tekst, tijd: velden.tijd, duur: velden.duur, naar_dag: naar,
-  }], "Bijgewerkt.");
+  actie("Inspreken", () => { OPEN = { id: it.id, modus: open === "opnemen" ? "" : "opnemen" }; teken(); }, "Iets inspreken bij deze regel");
+  actie("Andere dag", () => { OPEN = { id: it.id, modus: open === "dag" ? "" : "dag" }; teken(); }, "Naar een andere dag");
+  actie("Annuleren", () => { OPEN = { id: it.id, modus: open === "annuleren" ? "" : "annuleren" }; teken(); }, "Gaat niet gebeuren");
+  r.appendChild(acties);
+  return r;
 }
 
-function vraagVerschuiven(it, dagSleutel) {
-  const vak = el("div");
-  vak.appendChild(el("label", null, "Naar welke dag?"));
-  const knoppen = el("div", "keuzeknoppen");
-  for (const dag of PLAN.dagen) {
-    const b = el("button", "knop grijs klein", `${hoofdletter(KORT[dagnaamVan(dag.datum)])} ${datumNl(dag.datum)}`);
-    if (dag.datum === dagSleutel) b.classList.add("aan");
-    b.onclick = async () => {
-      $("paneel").close();
-      await verschuif(it, dagSleutel, dag.datum);
+/** Een stukje tekst dat bij een regel hoort, met de mogelijkheid het te wijzigen of weg te halen. */
+function tekenReactie(it, dagSleutel, re, bewerkbaar) {
+  const d = el("div", "reactie");
+  const kop = el("span", "wanneer", re.wanneer);
+  d.appendChild(kop);
+  if (!bewerkbaar) {
+    d.appendChild(document.createTextNode(re.tekst));
+    return d;
+  }
+  const invoer = el("input");
+  invoer.type = "text";
+  invoer.value = re.tekst;
+  invoer.className = "veld-reactie";
+  d.appendChild(invoer);
+  const rij = el("div", "bewerkrij");
+  const bewaar = el("button", "knop grijs klein", "Deze tekst bewaren");
+  bewaar.onclick = async () => {
+    const nieuw = invoer.value.trim();
+    if (!nieuw) { meld("Er staat niets in; gebruik Weghalen als je hem kwijt wil."); return; }
+    if (nieuw === re.tekst) { meld("Niets veranderd."); return; }
+    re.tekst = nieuw;
+    await doeItems([{
+      id: nieuwId(), soort: "reactie-gewijzigd", taak_id: it.id, taak_tekst: it.tekst,
+      dag: dagSleutel === "vrij" ? PLAN.van : dagSleutel, wanneer_van: re.wanneer, tekst: nieuw,
+    }], "Tekst bijgewerkt.");
+  };
+  rij.appendChild(bewaar);
+  const weg = el("button", "knop grijs klein", "Weghalen");
+  weg.onclick = async () => {
+    it.reacties = (it.reacties || []).filter((x) => x !== re);
+    await doeItems([{
+      id: nieuwId(), soort: "reactie-weg", taak_id: it.id, taak_tekst: it.tekst,
+      dag: dagSleutel === "vrij" ? PLAN.van : dagSleutel, wanneer_van: re.wanneer,
+    }], "Weggehaald.");
+  };
+  rij.appendChild(weg);
+  d.appendChild(rij);
+  return d;
+}
+
+/** Naar een andere dag, gekozen op de regel zelf. */
+function tekenDagkiezer(it, dagSleutel) {
+  const vak = el("div", "bewerkrij");
+  vak.appendChild(el("span", "hint", "Naar welke dag?"));
+  const datumIn = el("input");
+  datumIn.type = "date";
+  datumIn.value = dagSleutel === "vrij" ? "" : dagSleutel;
+  datumIn.className = "veld-datum";
+  datumIn.onchange = async () => {
+    OPEN = { id: null, modus: "" };
+    await verschuif(it, dagSleutel, datumIn.value || "vrij");
+  };
+  vak.appendChild(datumIn);
+  const snel = (tekst, naar) => {
+    const b = el("button", "knop grijs klein", tekst);
+    b.onclick = async () => { OPEN = { id: null, modus: "" }; await verschuif(it, dagSleutel, naar); };
+    vak.appendChild(b);
+  };
+  const basis = dagSleutel === "vrij" ? vandaagIso() : dagSleutel;
+  snel("Morgen", plusDagen(basis, 1));
+  snel("Volgende week", plusDagen(basis, 7));
+  snel("Nog geen dag", "vrij");
+  return vak;
+}
+
+/** Afmelden, met een bevestiging op de regel zelf. */
+function tekenAnnuleren(it, dagSleutel) {
+  const vak = el("div", "bewerkrij");
+  vak.appendChild(el("span", "hint",
+    "Zeker? Hij verdwijnt niet: hij komt bij Klaar te staan met \"(vervallen)\" erachter."));
+  const ja = el("button", "knop klein", "Ja, annuleren");
+  ja.onclick = async () => {
+    OPEN = { id: null, modus: "" };
+    it.klaar = vandaagIso();
+    await doeItems([{
+      id: nieuwId(), soort: "afgemeld", taak_id: it.id, taak_tekst: it.tekst,
+      dag: dagSleutel === "vrij" ? PLAN.van : dagSleutel,
+    }], "Geannuleerd.");
+  };
+  vak.appendChild(ja);
+  const nee = el("button", "knop grijs klein", "Nee, laat maar staan");
+  nee.onclick = () => { OPEN = { id: null, modus: "" }; teken(); };
+  vak.appendChild(nee);
+  return vak;
+}
+
+/** Inspreken op de regel zelf: een bolletje, een teller en twee knoppen. */
+function tekenOpnemen(it) {
+  const vak = el("div", "bewerkrij opnemen");
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    vak.appendChild(el("span", "hint",
+      "Opnemen kan hier niet. Op een telefoon werkt het alleen via een beveiligde verbinding (https)."));
+    return vak;
+  }
+  vak.appendChild(el("div", "bol"));
+  const teller = el("div", "teller", "0:00");
+  vak.appendChild(teller);
+  const stop = el("button", "knop klein", "Stoppen en bewaren");
+  vak.appendChild(stop);
+  const weg = el("button", "knop grijs klein", "Weggooien");
+  vak.appendChild(weg);
+
+  let seconden = 0;
+  let klok = null;
+  let recorder = null;
+  let stroom = null;
+  const brokken = [];
+  let bewaren = false;
+
+  navigator.mediaDevices.getUserMedia({ audio: true }).then((s) => {
+    stroom = s;
+    recorder = new MediaRecorder(s);
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) brokken.push(e.data); };
+    recorder.onstop = async () => {
+      stroom.getTracks().forEach((t) => t.stop());
+      clearInterval(klok);
+      if (!bewaren) return;
+      const blob = new Blob(brokken, { type: recorder.mimeType || "audio/webm" });
+      try {
+        const wav = await naarWav(blob);
+        await bewaarMemo(wav, it, seconden);
+      } catch (e) {
+        meld("Het opnemen lukte, maar omzetten niet (" + String(e.message || e).slice(0, 40) + ").", "fout");
+      }
     };
-    knoppen.appendChild(b);
+    recorder.start();
+    klok = setInterval(() => {
+      seconden++;
+      teller.textContent = `${Math.floor(seconden / 60)}:${String(seconden % 60).padStart(2, "0")}`;
+      if (seconden >= 300) stop.click();
+    }, 1000);
+  }).catch(() => {
+    teller.textContent = "geen microfoon";
+    meld("Ik kan de microfoon niet gebruiken. Geef deze app toegang tot de microfoon.", "fout");
+  });
+
+  stop.onclick = () => {
+    bewaren = true;
+    OPEN = { id: null, modus: "" };
+    try { recorder && recorder.stop(); } catch { /* al gestopt */ }
+    meld("Even geduld, ik zet je memo klaar…");
+    teken();
+  };
+  weg.onclick = () => {
+    bewaren = false;
+    OPEN = { id: null, modus: "" };
+    try { recorder && recorder.stop(); } catch { /* al gestopt */ }
+    if (stroom) stroom.getTracks().forEach((t) => t.stop());
+    clearInterval(klok);
+    teken();
+  };
+  return vak;
+}
+
+/** Bewaart wat er op de regel is aangepast, en zet er meteen de extra tekst bij. */
+async function bewaarRegel(it, dagSleutel, velden, erbijTekst) {
+  const items = [];
+  const zelfde = velden.tekst === it.tekst && velden.tijd === (it.tijd || "")
+    && velden.duur === (it.duur || 30);
+  if (!zelfde) {
+    it.tekst = velden.tekst;
+    it.tijd = velden.tijd;
+    it.duur = velden.duur;
+    items.push({
+      id: nieuwId(), soort: "gewijzigd", taak_id: it.id, taak_tekst: it.tekst,
+      dag: dagSleutel === "vrij" ? PLAN.van : dagSleutel,
+      tekst: velden.tekst, tijd: velden.tijd, duur: velden.duur,
+    });
   }
-  const vrij = el("button", "knop grijs klein", "Nog geen dag");
-  vrij.onclick = async () => { $("paneel").close(); await verschuif(it, dagSleutel, "vrij"); };
-  knoppen.appendChild(vrij);
-  const volgende = el("button", "knop grijs klein", "Naar volgende week");
-  volgende.onclick = async () => { $("paneel").close(); await verschuif(it, dagSleutel, plusDagen(PLAN.van, 7)); };
-  knoppen.appendChild(volgende);
-  vak.appendChild(knoppen);
-  vak.appendChild(el("p", null, "Een afgesproken uiterlijke datum blijft staan; die verandert hier niet."));
-  paneel("Verplaatsen of uitstellen", it.tekst, vak, []);
+  if (erbijTekst) {
+    const wanneer = new Date().toISOString().slice(0, 16).replace("T", " ");
+    it.reacties = it.reacties || [];
+    it.reacties.push({ wanneer, tekst: erbijTekst });
+    items.push({
+      id: nieuwId(), soort: "reactie", taak_id: it.id, taak_tekst: it.tekst, tekst: erbijTekst,
+      dag: dagSleutel === "vrij" ? PLAN.van : dagSleutel,
+    });
+  }
+  if (!items.length) { teken(); meld("Niets veranderd."); return; }
+  await doeItems(items, erbijTekst && !zelfde ? "Bijgewerkt en tekst erbij gezet."
+    : (erbijTekst ? "Tekst erbij gezet." : "Bijgewerkt."));
 }
 
 async function verschuif(it, vanSleutel, naarSleutel) {
@@ -835,49 +960,12 @@ async function verschuif(it, vanSleutel, naarSleutel) {
   else {
     const doel = PLAN.dagen.find((d) => d.datum === naarSleutel);
     if (doel) doel.items.push(it);
-    // naar volgende week: dan verdwijnt hij van dit scherm, dat is goed
+    // een dag buiten deze week: dan verdwijnt hij van dit scherm, dat is goed
   }
   await doeItems([{
     id: nieuwId(), soort: "verschoven", taak_id: it.id, taak_tekst: it.tekst,
     van_dag: vanSleutel === "vrij" ? PLAN.van : vanSleutel, naar_dag: naarSleutel,
-  }], naarSleutel === "vrij" ? "Van de dag afgehaald." : "Verschoven.");
-}
-
-function afmelden(it, dagSleutel) {
-  paneel("Afmelden", it.tekst,
-    "Deze gaat niet gebeuren. Hij verdwijnt niet: hij komt in je takenlijst bij Klaar te staan met \"(vervallen)\" erachter.",
-    [{
-      tekst: "Ja, afmelden", stijl: "", doe: async () => {
-        it.klaar = vandaagIso();
-        await doeItems([{
-          id: nieuwId(), soort: "afgemeld", taak_id: it.id, taak_tekst: it.tekst,
-          dag: dagSleutel === "vrij" ? PLAN.van : dagSleutel,
-        }], "Afgemeld.");
-      },
-    }]);
-}
-
-function vraagReactie(it, dagSleutel) {
-  const vak = el("div");
-  vak.appendChild(el("label", null, "Wat wil je hierbij zetten?"));
-  const invoer = el("textarea");
-  invoer.placeholder = "Bijvoorbeeld: Roel heeft gebeld, hij gaat akkoord met twee kamers.";
-  vak.appendChild(invoer);
-  vak.appendChild(el("p", null, "Dit komt bij deze taak te staan, en bij de relatie in het dossier als die te herkennen is."));
-  const dlg = paneel("Tekst erbij typen", it.tekst, vak, [{
-    tekst: "Bewaren", stijl: "", sluit: false, doe: async () => {
-      const tekst = invoer.value.trim();
-      if (!tekst) { meld("Er staat nog niets in."); return; }
-      dlg.close();
-      it.reacties = it.reacties || [];
-      it.reacties.push({ wanneer: new Date().toISOString().slice(0, 16).replace("T", " "), tekst });
-      await doeItems([{
-        id: nieuwId(), soort: "reactie", taak_id: it.id, taak_tekst: it.tekst, tekst,
-        dag: dagSleutel === "vrij" ? PLAN.van : dagSleutel,
-      }], "Bewaard.");
-    },
-  }]);
-  setTimeout(() => invoer.focus(), 60);
+  }], naarSleutel === "vrij" ? "Van de dag afgehaald." : "Verplaatst.");
 }
 
 function vraagNieuw(dagSleutel) {
