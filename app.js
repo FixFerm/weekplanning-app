@@ -411,6 +411,11 @@ function tekenSeintjes() {
       seintje(`Van je telefoon meegekomen en nog niet afgehandeld: ${stukken.join(" en ")}.`,
         [{ tekst: "Bekijken", doe: toonAandacht }]);
     }
+    if (STAND.plan && STAND.plan.twijfels && STAND.plan.twijfels.length) {
+      const n = STAND.plan.twijfels.length;
+      seintje(`${n === 1 ? "Eén punt lijkt" : n + " punten lijken"} dubbel te staan. Kijk jij even welke je wilt houden?`,
+        [{ tekst: "Bekijken", doe: toonTwijfels }]);
+    }
     if (STAND.plan && !STAND.plan.agenda_gelezen) {
       seintje("De afspraken uit je agenda zitten nog niet in deze week.", [{ tekst: "Agenda erbij halen", doe: haalAgenda }], true);
     }
@@ -879,21 +884,16 @@ function tekenOpnemen(it) {
 
   navigator.mediaDevices.getUserMedia({ audio: true }).then((s) => {
     stroom = s;
-    recorder = new MediaRecorder(s);
+    recorder = new MediaRecorder(s, opnameOpties());
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) brokken.push(e.data); };
     recorder.onstop = async () => {
       stroom.getTracks().forEach((t) => t.stop());
       clearInterval(klok);
       if (!bewaren) return;
-      const blob = new Blob(brokken, { type: recorder.mimeType || "audio/webm" });
-      try {
-        const wav = await naarWav(blob);
-        await bewaarMemo(wav, it, seconden);
-      } catch (e) {
-        meld("Het opnemen lukte, maar omzetten niet (" + String(e.message || e).slice(0, 40) + ").", "fout");
-      }
+      await rondMemoAf(brokken, recorder.mimeType, it, seconden);
     };
-    recorder.start();
+    // Elke seconde een stukje ophalen; dan staat er altijd geluid klaar.
+    recorder.start(1000);
     klok = setInterval(() => {
       seconden++;
       teller.textContent = `${Math.floor(seconden / 60)}:${String(seconden % 60).padStart(2, "0")}`;
@@ -1046,27 +1046,29 @@ function vraagMemo(bijItem) {
     { tekst: "Stoppen en bewaren", stijl: "", sluit: false, doe: () => stop(true) },
     { tekst: "Weggooien", sluit: false, doe: () => stop(false) },
   ]);
-  dlg.addEventListener("close", () => { if (opname) stop(false); }, { once: true });
+  // Het venster sluiten telt als weggooien — MAAR alleen als er nog geen keuze is
+  // gemaakt. Anders zou "Stoppen en bewaren" zichzelf omzetten naar weggooien: die
+  // knop sluit namelijk het venster, en dat sluiten kwam hier weer binnen. Precies
+  // daardoor verdween elke ingesproken memo (gemeld door Erik, 27 juli 2026).
+  let gekozen = false;
+  dlg.addEventListener("close", () => { if (!gekozen) stop(false); }, { once: true });
 
   navigator.mediaDevices.getUserMedia({ audio: true }).then((stroom) => {
-    const recorder = new MediaRecorder(stroom);
+    const recorder = new MediaRecorder(stroom, opnameOpties());
     const brokken = [];
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) brokken.push(e.data); };
     recorder.onstop = async () => {
       stroom.getTracks().forEach((t) => t.stop());
       clearInterval(klok);
-      if (!opname || !opname.bewaren) { opname = null; return; }
+      const bewaren = !!(opname && opname.bewaren);
       opname = null;
-      const blob = new Blob(brokken, { type: recorder.mimeType || "audio/webm" });
-      try {
-        const wav = await naarWav(blob);
-        await bewaarMemo(wav, bijItem, seconden);
-      } catch (e) {
-        meld("Het opnemen lukte, maar omzetten niet (" + String(e.message || e).slice(0, 40) + ").", "fout");
-      }
+      if (!bewaren) return;
+      await rondMemoAf(brokken, recorder.mimeType, bijItem, seconden);
     };
     opname = { recorder, bewaren: false };
-    recorder.start();
+    // Elke seconde een stukje geluid ophalen. Zo staat er altijd iets klaar, ook als
+    // het toestel het opnemen halverwege afbreekt.
+    recorder.start(1000);
     klok = setInterval(() => {
       seconden++;
       teller.textContent = `${Math.floor(seconden / 60)}:${String(seconden % 60).padStart(2, "0")}`;
@@ -1079,9 +1081,12 @@ function vraagMemo(bijItem) {
   });
 
   function stop(bewaren) {
-    if (!opname) { dlg.close(); return; }
-    opname.bewaren = bewaren;
-    try { opname.recorder.stop(); } catch { /* al gestopt */ }
+    if (gekozen) { dlg.close(); return; }
+    gekozen = true;
+    if (opname) {
+      opname.bewaren = bewaren;
+      try { opname.recorder.stop(); } catch { /* al gestopt */ }
+    }
     dlg.close();
     if (bewaren) meld("Even geduld, ik zet je memo klaar…");
   }
@@ -1125,20 +1130,66 @@ async function naarWav(blob) {
   return new Blob([bytes], { type: "audio/wav" });
 }
 
-async function bewaarMemo(wav, bijItem, seconden) {
-  const data = await naarBase64(wav);
+/** Welke geluidssoort mag dit toestel opnemen? Zonder keuze pakt de ene telefoon webm
+ *  en de andere mp4; door het zelf te kiezen weten we wat eruit komt. */
+function opnameOpties() {
+  const soorten = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+  for (const s of soorten) {
+    try {
+      if (window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(s)) return { mimeType: s };
+    } catch { /* dit toestel wil er niets over zeggen; dan de standaard */ }
+  }
+  return {};
+}
+
+function extensieVan(type) {
+  const s = String(type || "");
+  if (s.includes("wav")) return "wav";
+  if (s.includes("mp4") || s.includes("m4a")) return "m4a";
+  if (s.includes("ogg")) return "ogg";
+  return "webm";
+}
+
+/** Afronden na het opnemen. Drie dingen die het betrouwbaar maken:
+ *  - is er niets opgenomen, dan zeggen we dat (in plaats van stil te verdwijnen);
+ *  - lukt het omzetten naar WAV niet op dit toestel, dan gaat de opname zoals hij is —
+ *    de Mac leest webm, m4a en ogg net zo goed;
+ *  - gaat er verderop iets mis, dan komt dat in beeld en niet in de doofpot. */
+async function rondMemoAf(brokken, mimeType, bijItem, seconden) {
+  const ruw = new Blob(brokken, { type: mimeType || "audio/webm" });
+  if (!ruw.size) {
+    meld("Er is geen geluid opgenomen. Mag deze app de microfoon gebruiken?", "fout");
+    return;
+  }
+  let geluid = ruw;
+  try {
+    geluid = await naarWav(ruw);
+  } catch {
+    geluid = ruw; // omzetten kan niet op dit toestel; de Mac doet het dan wel
+  }
+  try {
+    await bewaarMemo(geluid, bijItem, seconden);
+  } catch (e) {
+    meld("Je memo kon niet worden klaargezet (" + String((e && e.message) || e).slice(0, 60) + ").", "fout");
+  }
+}
+
+async function bewaarMemo(geluid, bijItem, seconden) {
+  const data = await naarBase64(geluid);
+  const type = geluid.type || "audio/wav";
   const item = {
     id: nieuwId(), soort: "memo",
     taak_id: bijItem ? bijItem.id : "", taak_tekst: bijItem ? bijItem.tekst : "",
     seconden,
-    geluid: { naam: "memo.wav", type: "audio/wav", data },
+    geluid: { naam: "memo." + extensieVan(type), type, data },
   };
   if (MODUS === "mac") {
     await doeItems([item], "Memo bewaard. Hij staat bij \"dingen die op jou wachten\".");
   } else {
     await zetInWachtrij(item);
     teken();
-    meld(`Memo van ${seconden} seconden staat klaar om door te sturen.`, "goed");
+    // De grootte erbij: zo zie je met eigen ogen dat er echt geluid in zit.
+    meld(`Memo van ${seconden} seconden (${Math.max(1, Math.round(geluid.size / 1024))} kB) staat klaar om door te sturen.`, "goed");
   }
 }
 
@@ -1163,12 +1214,21 @@ async function doorsturen() {
     verstuurd: new Date().toISOString(),
     items,
   };
-  // Een gewone .json-naam: dan doet het deelmenu van elke telefoon mee. De Mac kijkt
-  // naar de inhoud van het bestand, niet naar de naam.
-  const naam = `AI Brein ${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")} ${apparaatNaam()}.json`;
-  const bestand = new File([JSON.stringify(inhoud)], naam, { type: "application/json" });
+  // Belangrijk: telefoons delen lang niet elke bestandssoort. Android laat een
+  // .txt-bestand (gewone tekst) wél door het deelmenu, maar een .json niet — daarop
+  // weigert `canShare` en belandde alles in de map Downloads (gemeld door Erik,
+  // 27 juli 2026). De inhoud blijft precies hetzelfde; de Mac kijkt naar wat er ín
+  // het bestand staat, nooit naar de naam. Lukt tekst toch niet, dan proberen we
+  // .json alsnog, en anders blijft downloaden het vangnet.
+  const stempel = `${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")} ${apparaatNaam()}`;
+  const tekst = JSON.stringify(inhoud);
+  const vormen = [
+    new File([tekst], `AI Brein ${stempel}.txt`, { type: "text/plain" }),
+    new File([tekst], `AI Brein ${stempel}.json`, { type: "application/json" }),
+  ];
+  const bestand = vormen.find((b) => kanDelen(b)) || vormen[0];
 
-  if (navigator.share && navigator.canShare && navigator.canShare({ files: [bestand] })) {
+  if (kanDelen(bestand)) {
     try {
       await navigator.share({
         files: [bestand],
@@ -1177,7 +1237,7 @@ async function doorsturen() {
       });
       await wachtrijLeeg(items);
       teken();
-      meld(`${items.length} ${items.length === 1 ? "ding" : "dingen"} doorgestuurd. Zet het bestandje in Postbus FixFerm.`, "goed");
+      meld(`${items.length} ${items.length === 1 ? "ding" : "dingen"} doorgestuurd. Kies je map Postbus FixFerm.`, "goed");
       return;
     } catch (e) {
       if (String(e).includes("Abort")) { meld("Afgebroken; alles staat nog klaar."); return; }
@@ -1187,16 +1247,28 @@ async function doorsturen() {
     const url = URL.createObjectURL(bestand);
     const a = document.createElement("a");
     a.href = url;
-    a.download = naam;
+    a.download = bestand.name;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     await wachtrijLeeg(items);
     teken();
-    meld("Bestandje bewaard. Zet het in je map Postbus FixFerm.", "goed");
+    // Eerlijk zeggen wat er gebeurde: dit toestel kon het deelmenu niet openen, dus
+    // staat het bestandje in Downloads en moet je het zelf één keer verplaatsen.
+    meld("Je telefoon kon het deelmenu niet openen; het bestandje staat nu bij je downloads. "
+      + "Verplaats het naar je map Postbus FixFerm.", "goed");
   } catch (e) {
     meld("Doorsturen lukte niet. Alles staat nog klaar; probeer het zo nog eens.", "fout");
+  }
+}
+
+/** Kan dit toestel dit bestand via het deelmenu delen? */
+function kanDelen(bestand) {
+  try {
+    return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [bestand] }));
+  } catch {
+    return false;
   }
 }
 
@@ -1473,6 +1545,60 @@ async function haalBinnen() {
     if (!u.bereikbaar) { meld("De map op de NAS is nu niet bereikbaar.", "fout"); return; }
     meld(u.gedaan ? "Binnengehaald: " + data.samenvatting + "." : "Er stond niets nieuws klaar.", u.gedaan ? "goed" : undefined);
   });
+}
+
+/**
+ * Punten die op elkaar lijken maar niet precies hetzelfde zijn. De app gooit ze niet
+ * samen en zet ze ook niet stilletjes dubbel neer: Erik ziet ze naast elkaar en kiest.
+ */
+function toonTwijfels() {
+  const vak = el("div");
+  const lijst = (STAND.plan && STAND.plan.twijfels) || [];
+  if (!lijst.length) {
+    vak.appendChild(el("p", null, "Er staat niets dubbel."));
+    paneel("Lijkt dit dubbel?", "", vak, []);
+    return;
+  }
+  vak.appendChild(el("p", null, "Deze punten lijken op elkaar. Horen ze allebei in je week, of is er één te veel?"));
+
+  for (const t of lijst) {
+    const kaart = el("div", "regel");
+    const midden = el("div", "midden");
+
+    for (const kant of ["een", "twee"]) {
+      const p = t[kant];
+      const rij = el("div", "tekst", (p.tijd ? p.tijd + " " : "") + p.tekst);
+      midden.appendChild(rij);
+      const onder = el("div", "onder");
+      onder.appendChild(el("span", "label", p.herkomst));
+      onder.appendChild(el("span", "label", p.dag === "vrij" ? "nog geen dag" : dagnaamVan(p.dag)));
+      const weg = el("button", "knop grijs klein", "Deze weghalen");
+      weg.onclick = () => kiesTwijfel(t.sleutel, p.id);
+      onder.appendChild(weg);
+      midden.appendChild(onder);
+    }
+
+    const beide = el("button", "knop grijs klein", "Allebei laten staan");
+    beide.onclick = () => kiesTwijfel(t.sleutel, "beide");
+    midden.appendChild(beide);
+
+    kaart.appendChild(midden);
+    vak.appendChild(kaart);
+  }
+  paneel("Lijkt dit dubbel?", "jij kiest, ik gok niet", vak, []);
+}
+
+async function kiesTwijfel(sleutel, keuze) {
+  const r = await fetch("/api/twijfel" + (PLAN ? "?van=" + PLAN.van : ""), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sleutel, keuze }),
+  });
+  const data = await r.json();
+  STAND = data.stand; PLAN = STAND.plan;
+  meld(data.melding, data.gelukt ? "goed" : "fout");
+  teken();
+  if (STAND.plan && STAND.plan.twijfels && STAND.plan.twijfels.length) toonTwijfels();
+  else $("paneel").close();
 }
 
 function toonAandacht() {
