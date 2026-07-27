@@ -545,7 +545,7 @@ function tekenVoet() {
   const rek = el("div", "rek");
   if (WACHTRIJ.length) {
     rek.appendChild(document.createTextNode(`${WACHTRIJ.length} ${WACHTRIJ.length === 1 ? "ding" : "dingen"} klaar`));
-    rek.appendChild(el("small", null, "naar je map Postbus"));
+    rek.appendChild(el("small", null, "landt in je downloadmap"));
   } else {
     rek.appendChild(document.createTextNode("Niets te versturen"));
     rek.appendChild(el("small", null, "alles is doorgegeven"));
@@ -558,6 +558,14 @@ function tekenVoet() {
   door.disabled = !WACHTRIJ.length;
   door.onclick = doorsturen;
   voet.appendChild(door);
+  // Uitwijk voor een toestel waar de downloadmap vastligt: dan alsnog het deelmenu.
+  // Alleen zichtbaar als er iets klaarstaat, met woorden erbij — nooit een icoontje.
+  if (WACHTRIJ.length) {
+    const anders = el("button", "knop rustig klein", "Anders doorsturen");
+    anders.title = "Met het deelmenu van je telefoon, als je downloadmap niet in te stellen is";
+    anders.onclick = doorsturenViaDeelmenu;
+    voet.appendChild(anders);
+  }
 }
 
 function kopieer(tekst) {
@@ -1204,9 +1212,10 @@ function naarBase64(blob) {
 
 // ---------- doorsturen (telefoon → Mac) ----------
 
-async function doorsturen() {
-  if (!WACHTRIJ.length) { meld("Er staat niets klaar."); return; }
-  const items = WACHTRIJ.slice();
+/** Het pakketje zoals het naar de Mac gaat: een gewoon tekstbestand met JSON erin.
+ *  De naam maakt niet uit — de Mac kijkt naar de inhoud. Tekst is bewust gekozen:
+ *  telefoons doen moeilijk over .json (Android weigert dat in het deelmenu). */
+function maakPakketje(items) {
   const inhoud = {
     versie: 1,
     soort: "aibrein-post",
@@ -1214,35 +1223,21 @@ async function doorsturen() {
     verstuurd: new Date().toISOString(),
     items,
   };
-  // Belangrijk: telefoons delen lang niet elke bestandssoort. Android laat een
-  // .txt-bestand (gewone tekst) wél door het deelmenu, maar een .json niet — daarop
-  // weigert `canShare` en belandde alles in de map Downloads (gemeld door Erik,
-  // 27 juli 2026). De inhoud blijft precies hetzelfde; de Mac kijkt naar wat er ín
-  // het bestand staat, nooit naar de naam. Lukt tekst toch niet, dan proberen we
-  // .json alsnog, en anders blijft downloaden het vangnet.
   const stempel = `${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")} ${apparaatNaam()}`;
-  const tekst = JSON.stringify(inhoud);
-  const vormen = [
-    new File([tekst], `AI Brein ${stempel}.txt`, { type: "text/plain" }),
-    new File([tekst], `AI Brein ${stempel}.json`, { type: "application/json" }),
-  ];
-  const bestand = vormen.find((b) => kanDelen(b)) || vormen[0];
+  return new File([JSON.stringify(inhoud)], `AI Brein ${stempel}.txt`, { type: "text/plain" });
+}
 
-  if (kanDelen(bestand)) {
-    try {
-      await navigator.share({
-        files: [bestand],
-        title: "Voor de weekplanning",
-        text: "Zet dit bestandje in je map Postbus FixFerm.",
-      });
-      await wachtrijLeeg(items);
-      teken();
-      meld(`${items.length} ${items.length === 1 ? "ding" : "dingen"} doorgestuurd. Kies je map Postbus FixFerm.`, "goed");
-      return;
-    } catch (e) {
-      if (String(e).includes("Abort")) { meld("Afgebroken; alles staat nog klaar."); return; }
-    }
-  }
+/** Doorsturen = het bestandje gewoon opslaan. Bewust GEEN deelvenster: geen enkele
+ *  telefoonbrowser mag zelf in een map schrijven (dat is een regel van de telefoon,
+ *  zie caniuse "File System Access API"), en in dat deelvenster staat je eigen map
+ *  niet — het is immers geen app om iets naartoe te sturen. Wat wél kan: de
+ *  downloadmap van je browser één keer op "Postbus FixFerm" zetten. Dan landt elk
+ *  pakketje daar meteen, zonder dat je iets hoeft te kiezen. (Erik, 27 juli 2026:
+ *  "het enige wat er moet gebeuren is dat het in die map wordt geplaatst".) */
+async function doorsturen() {
+  if (!WACHTRIJ.length) { meld("Er staat niets klaar."); return; }
+  const items = WACHTRIJ.slice();
+  const bestand = maakPakketje(items);
   try {
     const url = URL.createObjectURL(bestand);
     const a = document.createElement("a");
@@ -1254,12 +1249,35 @@ async function doorsturen() {
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     await wachtrijLeeg(items);
     teken();
-    // Eerlijk zeggen wat er gebeurde: dit toestel kon het deelmenu niet openen, dus
-    // staat het bestandje in Downloads en moet je het zelf één keer verplaatsen.
-    meld("Je telefoon kon het deelmenu niet openen; het bestandje staat nu bij je downloads. "
-      + "Verplaats het naar je map Postbus FixFerm.", "goed");
+    meld(`${items.length} ${items.length === 1 ? "ding" : "dingen"} opgeslagen in je downloadmap.`, "goed");
   } catch (e) {
-    meld("Doorsturen lukte niet. Alles staat nog klaar; probeer het zo nog eens.", "fout");
+    meld("Opslaan lukte niet. Alles staat nog klaar; probeer het zo nog eens.", "fout");
+  }
+}
+
+/** De uitwijk voor een toestel waar de downloadmap niet in te stellen is: alsnog het
+ *  deelmenu. Zit weggestopt onder "Anders doorsturen", want normaal heb je het niet
+ *  nodig. */
+async function doorsturenViaDeelmenu() {
+  if (!WACHTRIJ.length) { meld("Er staat niets klaar."); return; }
+  const items = WACHTRIJ.slice();
+  const bestand = maakPakketje(items);
+  if (!kanDelen(bestand)) {
+    meld("Dit toestel kan bestanden niet delen. Gebruik de gewone knop Doorsturen.", "fout");
+    return;
+  }
+  try {
+    await navigator.share({
+      files: [bestand],
+      title: "Voor de weekplanning",
+      text: "Zet dit bestandje in je map Postbus FixFerm.",
+    });
+    await wachtrijLeeg(items);
+    teken();
+    meld(`${items.length} ${items.length === 1 ? "ding" : "dingen"} doorgestuurd.`, "goed");
+  } catch (e) {
+    if (String(e).includes("Abort")) { meld("Afgebroken; alles staat nog klaar."); return; }
+    meld("Delen lukte niet. Alles staat nog klaar.", "fout");
   }
 }
 
