@@ -21,8 +21,9 @@ const SOORT_LANG = { v: "vast", t: "taak", a: "afspraak", e: "extra", g: "gewerk
 let MODUS = "telefoon";   // wordt "mac" als het programmaatje op deze Mac antwoordt
 let STAND = null;         // alles wat de Mac-kant weet
 let PLAN = null;          // de weekplanning
-let DAG = null;           // welke dag staat er open ("vrij" voor "nog geen dag")
-let SCHERM = "week";      // telefoon: "week" (de dagtegels) of "dag" (één dag open)
+let TODO = [];            // de To do-lijst (eigen lijst, hoort bij geen enkele week)
+let DAG = null;           // welke dag staat er open ("vrij" voor "nog geen dag", "todo" voor de lijst)
+let SCHERM = "week";      // telefoon: "week" (de dagtegels), "dag" (één dag open) of "todo" (de lijst)
 let HELEWEEK = false;     // hele week naast elkaar (breed scherm)
 let WACHTRIJ = [];        // telefoon: wat nog doorgestuurd moet worden
 let BEZIG = "";           // tekst van een klus die even duurt (agenda ophalen bijv.)
@@ -204,6 +205,7 @@ function pakketNaarPlan(p) {
   return {
     versie: 1, week: p.w, van: p.m, gemaakt: p.g || "",
     dagen, vrij: (p.f || []).map(grootItem),
+    todo: (p.o || []).map(grootTodo),
   };
 }
 
@@ -211,11 +213,22 @@ function grootItem(k) {
   return {
     id: k.i, tekst: k.t, tijd: k.u || "",
     soort: SOORT_LANG[k.s || "t"] || "extra",
+    nr: k.r || "",
     wie: k.w || "", uiterlijk: k.x || "", typ: k.c || "",
     duur: k.n || 0,
     klaar: k.k ? vandaagIso() : "", telaat: !!k.l,
     gewerkt_min: k.h || 0,
     reacties: [],
+  };
+}
+
+/** Eén punt van de To do-lijst uit het pakketje. Het vaste nummer is het kenmerk. */
+function grootTodo(k) {
+  const wie = k.w || "";
+  return {
+    id: "todo-" + (k.n || Math.random().toString(36).slice(2, 7)),
+    nr: k.n || "", tekst: k.t, wie, uiterlijk: k.x || "", klaar: "",
+    wacht_op_ander: !!(wie && !/erik/i.test(wie)),
   };
 }
 
@@ -252,6 +265,7 @@ async function neemCodeOver(hash) {
     bewaarPlan(plan);
     localStorage.removeItem(SLEUTEL_DELEN);
     PLAN = plan;
+    TODO = PLAN.todo = PLAN.todo || [];
     DAG = null;
     SCHERM = "week";
     meld("De weekplanning staat op je telefoon.", "goed");
@@ -283,6 +297,7 @@ async function start() {
     document.body.classList.add("telefoon");
     await laadWachtrij();
     PLAN = bewaardPlan();
+    TODO = PLAN ? (PLAN.todo = PLAN.todo || []) : [];
     bewaarAppOpApparaat();
   }
   window.addEventListener("hashchange", async () => {
@@ -300,6 +315,7 @@ async function haalStand(van) {
   const r = await fetch(adres, { cache: "no-store" });
   STAND = await r.json();
   PLAN = STAND.plan;
+  TODO = STAND.todo || [];
 }
 
 function bewaarAppOpApparaat() {
@@ -333,18 +349,19 @@ function teken() {
   tekenBalkknoppen();
   tekenSeintjes();
   if (MODUS === "telefoon") {
-    // Op de telefoon: eerst de week als dagtegels; tik op een dag en je zit erin,
-    // met bovenin knopjes om meteen naar een andere dag te springen.
+    // Op de telefoon: eerst de week als dagtegels; tik op een dag (of op de To do-tegel)
+    // en je zit erin, met bovenin knopjes om meteen ergens anders heen te springen.
     if (SCHERM === "week") {
       $("dagchips").innerHTML = "";
       tekenWeektegels();
     } else {
       tekenTelefoonChips();
-      tekenDag();
+      if (SCHERM === "todo") tekenTodo(); else tekenDag();
     }
   } else {
     tekenDagchips();
-    if (HELEWEEK) tekenWeekraster(); else tekenDag();
+    if (DAG === "todo") tekenTodo();
+    else if (HELEWEEK) tekenWeekraster(); else tekenDag();
   }
   tekenVoet();
 }
@@ -370,7 +387,11 @@ function tekenBalkknoppen() {
     knop("Bijwerken uit het brein", bouwOpnieuw);
     knop("Binnenhalen van telefoon", haalBinnen);
     if (window.innerWidth >= 900 && PLAN) {
-      knop(HELEWEEK ? "Eén dag" : "Hele week", () => { HELEWEEK = !HELEWEEK; teken(); });
+      knop(HELEWEEK ? "Eén dag" : "Hele week", () => {
+        HELEWEEK = !HELEWEEK;
+        if (HELEWEEK && DAG === "todo") DAG = null; // het raster heeft de lijst als eigen kolom
+        teken();
+      });
     }
   } else {
     knop("Nieuwe week scannen", scanNieuweWeek);
@@ -468,12 +489,122 @@ function tekenDagchips() {
     const open = PLAN.vrij.filter((i) => !i.klaar).length;
     maak("vrij", "Nog", "geen dag", open ? `${open} te doen` : "leeg", false);
   }
+  const openTodo = TODO.filter((t) => !t.klaar).length;
+  maak("todo", "To do", "je lijst", openTodo ? `${openTodo} open` : "leeg", false);
 }
 
 function itemsVan(sleutel) {
   if (sleutel === "vrij") return PLAN.vrij || [];
   const dag = PLAN.dagen.find((d) => d.datum === sleutel);
   return dag ? dag.items : [];
+}
+
+// ---------- de To do-lijst ----------
+
+/**
+ * Eriks eigen lijst: dingen die nog geen week of dag hebben. Bewust simpel (zijn eigen
+ * ontwerp, 29 juli 2026): geen slepen, geen plannen — twee knoppen per regel. Klaar
+ * zet het punt als gedaan op de dag van vandaag; "Gaat niet gebeuren" zet het in
+ * taken.md bij Klaar met "(vervallen)" erachter, zonder dag. Wat op iemand anders
+ * wacht staat onderaan apart, niet tussen de eigen klusjes.
+ */
+function tekenTodo() {
+  const vak = $("inhoud");
+  vak.innerHTML = "";
+  const kop = el("div", "dagkop");
+  const links = el("div");
+  links.appendChild(el("h2", null, "To do"));
+  links.appendChild(el("div", "hint",
+    "Je eigen lijst, los van de week. Vink je iets af, dan komt het als gedaan op de dag van vandaag te staan."));
+  kop.appendChild(links);
+  vak.appendChild(kop);
+
+  const eigen = TODO.filter((t) => !t.wacht_op_ander);
+  const wacht = TODO.filter((t) => t.wacht_op_ander);
+
+  if (!eigen.length && !wacht.length) {
+    vak.appendChild(el("div", "leeg", "Je lijst is leeg. Met de + zet je er iets op."));
+  }
+  if (eigen.length) {
+    const lijst = el("div", "lijst");
+    for (const t of eigen) lijst.appendChild(tekenTodoRegel(t));
+    vak.appendChild(lijst);
+  }
+  if (wacht.length) {
+    vak.appendChild(el("h3", "todo-tussenkop", "Wacht op iemand anders"));
+    const lijst = el("div", "lijst");
+    for (const t of wacht) lijst.appendChild(tekenTodoRegel(t));
+    vak.appendChild(lijst);
+  }
+
+  if (MODUS === "mac") {
+    const b = el("button", "knop grijs", "+ Op je lijst erbij");
+    b.style.marginTop = "14px";
+    b.onclick = () => vraagNieuw("todo");
+    vak.appendChild(b);
+  }
+}
+
+function tekenTodoRegel(t) {
+  const r = el("div", "regel soort-taak" + (t.klaar ? " klaar" : ""));
+  const midden = el("div", "midden");
+  midden.appendChild(el("div", "tekst", t.tekst));
+  const onder = el("div", "onder");
+  if (t.wacht_op_ander) onder.appendChild(el("span", "label", "wacht op " + t.wie));
+  if (t.uiterlijk) onder.appendChild(el("span", "label", "uiterlijk " + datumNl(t.uiterlijk)));
+  if (onder.childElementCount) midden.appendChild(onder);
+
+  // "Gaat niet gebeuren" vraagt eerst een bevestiging, op de regel zelf.
+  if (OPEN.id === t.id && OPEN.modus === "vervalt") {
+    const vraag = el("div", "bewerkrij");
+    vraag.appendChild(el("span", "hint",
+      "Zeker? Hij verdwijnt niet: hij komt bij Klaar te staan met \"(vervallen)\" erachter."));
+    const ja = el("button", "knop klein", "Ja, gaat niet gebeuren");
+    ja.onclick = () => todoAf(t, true);
+    vraag.appendChild(ja);
+    const nee = el("button", "knop grijs klein", "Nee, laat staan");
+    nee.onclick = () => { OPEN = { id: null, modus: "" }; teken(); };
+    vraag.appendChild(nee);
+    midden.appendChild(vraag);
+  }
+
+  r.appendChild(midden);
+  if (!t.klaar) {
+    const acties = el("div", "acties");
+    const klaar = el("button", "knop grijs klein", "Klaar");
+    klaar.title = "Gedaan; komt op vandaag te staan";
+    klaar.onclick = () => todoAf(t, false);
+    acties.appendChild(klaar);
+    const weg = el("button", "knop grijs klein", "Gaat niet gebeuren");
+    weg.onclick = () => { OPEN = { id: t.id, modus: OPEN.modus === "vervalt" && OPEN.id === t.id ? "" : "vervalt" }; teken(); };
+    acties.appendChild(weg);
+    r.appendChild(acties);
+  }
+  return r;
+}
+
+/** Een To do-punt afronden: klaar (komt op vandaag te staan) of vervallen (alleen naar
+ *  Klaar in je takenlijst, bewust op geen enkele dag). */
+async function todoAf(t, vervallen) {
+  OPEN = { id: null, modus: "" };
+  const nu = vandaagIso();
+  const plek = TODO.indexOf(t);
+  if (plek >= 0) TODO.splice(plek, 1);
+  const item = {
+    id: nieuwId(), soort: vervallen ? "afgemeld" : "afgevinkt", todo: 1,
+    taak_nr: t.nr, taak_tekst: t.tekst, dag: nu,
+  };
+  if (!vervallen && MODUS === "telefoon") {
+    // Op het scherm alvast op vandaag zetten; de Mac doet hetzelfde bij het binnenhalen.
+    const dag = PLAN.dagen.find((d) => d.datum === nu);
+    if (dag) {
+      dag.items.push({ id: item.id, soort: "taak", nr: t.nr, tekst: t.tekst, tijd: "", klaar: nu, reacties: [] });
+      sorteerDag(dag.items);
+    }
+  }
+  await doeItems([item], vervallen
+    ? "Oké, gaat niet gebeuren. Hij staat bij Klaar met \"(vervallen)\" erachter."
+    : "Klaar. Hij staat als gedaan op vandaag.");
 }
 
 /** Wat speelt er op een dag? Voor de dagtegels en de dagknopjes. */
@@ -525,6 +656,24 @@ function tekenWeektegels() {
   for (const dag of PLAN.dagen) {
     maakTegel(dag.datum, hoofdletter(dagnaamVan(dag.datum)), datumNl(dag.datum), false);
   }
+
+  // De achtste plek, naast zondag: de To do-lijst. Eriks eigen lijst, hoort bij geen
+  // enkele week — vandaar geen datum maar een telling.
+  const eigen = TODO.filter((t) => !t.klaar && !t.wacht_op_ander).length;
+  const wacht = TODO.filter((t) => !t.klaar && t.wacht_op_ander).length;
+  const tegel = el("button", "dagtegel todo");
+  const kop = el("div", "tegel-kop");
+  kop.appendChild(el("strong", null, "To do"));
+  tegel.appendChild(kop);
+  tegel.appendChild(el("small", null, "je eigen lijst"));
+  const stand = el("div", "tegel-stand");
+  if (eigen) stand.appendChild(el("span", "tegel-open", `${eigen} op je lijst`));
+  else stand.appendChild(el("span", "tegel-klaar", "niets open"));
+  if (wacht) stand.appendChild(el("span", "tegel-los", `${wacht} wacht op een ander`));
+  tegel.appendChild(stand);
+  tegel.onclick = () => { SCHERM = "todo"; OPEN = { id: null, modus: "" }; teken(); };
+  rooster.appendChild(tegel);
+
   if ((PLAN.vrij || []).length) {
     maakTegel("vrij", "Nog geen dag", "deze week nog inplannen", true);
   }
@@ -547,14 +696,22 @@ function tekenTelefoonChips() {
   const maak = (sleutel, boven) => {
     const items = itemsVan(sleutel);
     const open = items.filter((i) => !i.klaar).length;
-    const b = el("button", "dagchip" + (DAG === sleutel ? " aan" : "") + (sleutel === nu ? " nu" : ""));
+    const aan = SCHERM === "dag" && DAG === sleutel;
+    const b = el("button", "dagchip" + (aan ? " aan" : "") + (sleutel === nu ? " nu" : ""));
     b.appendChild(el("strong", null, boven));
     b.appendChild(el("small", null, open ? String(open) : "·"));
-    b.onclick = () => { DAG = sleutel; OPEN = { id: null, modus: "" }; teken(); };
+    b.onclick = () => { DAG = sleutel; SCHERM = "dag"; OPEN = { id: null, modus: "" }; teken(); };
     vak.appendChild(b);
   };
   for (const dag of PLAN.dagen) maak(dag.datum, hoofdletter(KORT[dagnaamVan(dag.datum)]));
-  if ((PLAN.vrij || []).length || DAG === "vrij") maak("vrij", "Nog");
+  if ((PLAN.vrij || []).length || (SCHERM === "dag" && DAG === "vrij")) maak("vrij", "Nog");
+
+  const openTodo = TODO.filter((t) => !t.klaar).length;
+  const bt = el("button", "dagchip" + (SCHERM === "todo" ? " aan" : ""));
+  bt.appendChild(el("strong", null, "To do"));
+  bt.appendChild(el("small", null, openTodo ? String(openTodo) : "·"));
+  bt.onclick = () => { SCHERM = "todo"; OPEN = { id: null, modus: "" }; teken(); };
+  vak.appendChild(bt);
 }
 
 function tekenDag() {
@@ -614,6 +771,36 @@ function tekenWeekraster() {
     kolom(hoofdletter(dagnaamVan(dag.datum)), datumNl(dag.datum), dag.items, dag.datum);
   }
   kolom("Nog geen dag", "deze week", PLAN.vrij || [], "vrij");
+
+  // De To do-lijst als eigen kolom. Dit zijn geen weekpunten: tik op een regel en je
+  // zit in de lijst zelf, met de knoppen Klaar en Gaat niet gebeuren.
+  const k = el("div", "kolom");
+  const open = TODO.filter((t) => !t.klaar).length;
+  const h = el("h3", null, "To do");
+  h.appendChild(el("small", null, open ? `je lijst · ${open} open` : "je lijst"));
+  k.appendChild(h);
+  const lijst = el("div", "lijst");
+  for (const t of TODO) {
+    const r = el("div", "regel soort-taak tikbaar");
+    r.onclick = () => { DAG = "todo"; HELEWEEK = false; teken(); };
+    const midden = el("div", "midden");
+    midden.appendChild(el("div", "tekst", t.tekst));
+    if (t.wacht_op_ander) {
+      const onder = el("div", "onder");
+      onder.appendChild(el("span", "label", "wacht op " + t.wie));
+      midden.appendChild(onder);
+    }
+    r.appendChild(midden);
+    lijst.appendChild(r);
+  }
+  if (!TODO.length) lijst.appendChild(el("div", "leeg", "leeg"));
+  k.appendChild(lijst);
+  const bPlus = el("button", "knop grijs klein", "+");
+  bPlus.style.marginTop = "8px";
+  bPlus.onclick = () => vraagNieuw("todo");
+  k.appendChild(bPlus);
+  raster.appendChild(k);
+
   vak.appendChild(raster);
 }
 
@@ -657,9 +844,12 @@ function tekenVoet() {
   plus.disabled = !PLAN;
   plus.onclick = () => {
     if (!PLAN) return;
+    // Waar je staat, daar komt het bij: in de To do-lijst op je lijst, in een dag op
+    // die dag, en anders op vandaag. Geen keuzescherm (Eriks ontwerp, 29 juli 2026).
     const nu = vandaagIso();
-    const doel = SCHERM === "dag" && DAG ? DAG
-      : (PLAN.dagen.some((d) => d.datum === nu) ? nu : "vrij");
+    const doel = SCHERM === "todo" ? "todo"
+      : SCHERM === "dag" && DAG ? DAG
+        : (PLAN.dagen.some((d) => d.datum === nu) ? nu : "vrij");
     vraagNieuw(doel);
   };
   rij.appendChild(plus);
@@ -721,7 +911,7 @@ async function doeItems(items, meldingTekst) {
       body: JSON.stringify({ items }),
     });
     const data = await r.json();
-    if (data.stand) { STAND = data.stand; PLAN = STAND.plan; }
+    if (data.stand) { STAND = data.stand; PLAN = STAND.plan; TODO = STAND.todo || []; }
     teken();
     if (meldingTekst) meld(meldingTekst, "goed");
     return;
@@ -1130,7 +1320,9 @@ function vraagNieuw(dagSleutel) {
   invoer.placeholder = "Bijvoorbeeld: Marc bellen over de nulmeting";
   vak.appendChild(invoer);
 
-  vak.appendChild(el("label", null, "Op welke dag?"));
+  // Waar je staat is alvast gekozen (sta je in de To do-lijst, dan komt het daar);
+  // het keuzemenu is er alleen om het nog te kunnen veranderen.
+  vak.appendChild(el("label", null, "Waar komt het te staan?"));
   const keuze = el("select");
   for (const dag of PLAN.dagen) {
     const o = el("option", null, `${hoofdletter(dagnaamVan(dag.datum))} ${datumNl(dag.datum)}`);
@@ -1138,10 +1330,14 @@ function vraagNieuw(dagSleutel) {
     if (dag.datum === dagSleutel) o.selected = true;
     keuze.appendChild(o);
   }
-  const o = el("option", null, "Nog geen dag");
+  const o = el("option", null, "Nog geen dag (wel deze week)");
   o.value = "vrij";
   if (dagSleutel === "vrij") o.selected = true;
   keuze.appendChild(o);
+  const ot = el("option", null, "Op je To do-lijst (geen week)");
+  ot.value = "todo";
+  if (dagSleutel === "todo") ot.selected = true;
+  keuze.appendChild(ot);
   vak.appendChild(keuze);
 
   vak.appendChild(el("label", null, "Tijd (mag leeg)"));
@@ -1149,7 +1345,8 @@ function vraagNieuw(dagSleutel) {
   tijd.type = "time";
   vak.appendChild(tijd);
 
-  vak.appendChild(el("p", null, "Nieuwe taken komen ook in je takenlijst bij \"Deze week\" te staan."));
+  vak.appendChild(el("p", null,
+    "Nieuwe taken komen ook in je takenlijst te staan: bij \"Deze week\", of bij \"To do\" als je je lijst kiest."));
 
   const dlg = paneel("Iets toevoegen", null, vak, [{
     tekst: "Toevoegen", stijl: "", sluit: false, doe: async () => {
@@ -1157,6 +1354,14 @@ function vraagNieuw(dagSleutel) {
       if (!tekst) { meld("Er staat nog niets in."); return; }
       dlg.close();
       const dag = keuze.value;
+      if (dag === "todo") {
+        const id = nieuwId();
+        // Bovenaan de lijst: het laatst opgeschreven staat bovenaan.
+        TODO.unshift({ id, nr: "", tekst, wie: "", uiterlijk: "", klaar: "", wacht_op_ander: false });
+        if (MODUS === "telefoon") { SCHERM = "todo"; } else { DAG = "todo"; }
+        await doeItems([{ id, soort: "nieuwe-taak", todo: 1, tekst }], "Op je To do-lijst gezet.");
+        return;
+      }
       const nieuw = {
         id: nieuwId(), soort: "taak", tekst, tijd: tijd.value || "",
         wie: "", uiterlijk: "", klaar: "", reacties: [],
@@ -1567,7 +1772,9 @@ function tellingVanPlan() {
     }
   }
   const woord = (n, e, m) => `${n} ${n === 1 ? e : m}`;
+  const todoOpen = TODO.filter((t) => !t.klaar).length;
   return `${woord(afspraken, "afspraak", "afspraken")}, ${woord(taken, "taak", "taken")} en ${woord(vast, "vast punt", "vaste punten")}`
+    + (todoOpen ? `, plus je To do-lijst (${woord(todoOpen, "punt", "punten")})` : "")
     + (gewerkt ? ` (en ${woord(gewerkt, "gewerkte uurregel", "gewerkte uurregels")} uit je administratie)` : "");
 }
 

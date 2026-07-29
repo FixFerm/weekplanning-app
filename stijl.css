@@ -187,6 +187,9 @@ body.telefoon .app { padding-bottom: 200px; }
 .dagtegel strong { color: var(--kop); font-size: 16px; font-weight: 700; }
 .dagtegel small { color: var(--zacht); font-size: 12px; font-weight: 500; }
 .dagtegel.nu { border: 2px solid var(--oranje); padding: 12px 13px; }
+/* De To do-tegel: de eigen lijst, naast zondag. Rustig herkenbaar aan het bandje. */
+.dagtegel.todo { background: var(--band); }
+.todo-tussenkop { font-size: 14px; font-weight: 700; color: var(--zacht); margin: 16px 0 8px; }
 .tegel-vandaag {
   font-size: 11px;
   font-weight: 700;

@@ -4,7 +4,7 @@
 // Let op: dit werkt alleen op een beveiligde verbinding (https). Op http bestaat dit
 // niet; dan opent het icoontje niets zodra je geen bereik hebt.
 
-const VERSIE = "weekplanning-3";
+const VERSIE = "weekplanning-4";
 const NODIG = [
   "./", "./index.html", "./app.js", "./stijl.css", "./vendor/qr.js",
   "./manifest.webmanifest", "./icoon-192.png", "./icoon-512.png",
