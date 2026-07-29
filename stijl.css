@@ -25,6 +25,8 @@
   --tekst: var(--grijsblauw);
   --zacht: var(--grijsblauw-zacht);
   --band: var(--licht);
+  --groen: #1F5B3A;
+  --groen-zacht: #E9F3EC;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -37,6 +39,8 @@
     --zacht: #8B9CB3;
     --band: #1A2942;
     --oranje-zacht: #2A2B33;
+    --groen: #7FC79A;
+    --groen-zacht: #1D3A2A;
   }
 }
 
@@ -55,6 +59,8 @@ html, body {
 h1, h2, h3 { color: var(--kop); margin: 0; }
 
 .app { max-width: 1500px; margin: 0 auto; padding: 0 16px 120px; }
+/* op de telefoon extra ruimte onderaan, zodat de laatste regel boven de balk uitkomt */
+body.telefoon .app { padding-bottom: 200px; }
 
 /* ---------- de bovenbalk ---------- */
 
@@ -136,6 +142,67 @@ h1, h2, h3 { color: var(--kop); margin: 0; }
 .dagchip .telling { font-size: 12px; color: var(--zacht); }
 .dagchip.aan .telling { color: var(--oranje-glow); }
 
+/* de smalle dagknopjes bovenin het dagscherm van de telefoon */
+.dagchips.mini { gap: 5px; }
+.dagchips.mini .dagchip {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 2px;
+  min-height: 50px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+.dagchips.mini .dagchip small { font-size: 11px; }
+.dagchips.mini .dagchip.terug {
+  background: transparent;
+  border-style: dashed;
+  color: var(--tekst);
+}
+.dagchips.mini .dagchip.terug strong { font-size: 17px; line-height: 0.9; }
+
+/* ---------- het beginscherm van de telefoon: de week als dagtegels ---------- */
+
+.dagtegels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding-top: 2px;
+}
+.dagtegel {
+  font-family: inherit;
+  text-align: left;
+  background: var(--kaart);
+  border: 1px solid var(--kaart-rand);
+  border-radius: 14px;
+  padding: 13px 14px;
+  min-height: 96px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.dagtegel:active { transform: translateY(1px); }
+.dagtegel.breed { grid-column: 1 / -1; min-height: 0; background: var(--band); }
+.dagtegel .tegel-kop { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.dagtegel strong { color: var(--kop); font-size: 16px; font-weight: 700; }
+.dagtegel small { color: var(--zacht); font-size: 12px; font-weight: 500; }
+.dagtegel.nu { border: 2px solid var(--oranje); padding: 12px 13px; }
+.tegel-vandaag {
+  font-size: 11px;
+  font-weight: 700;
+  color: #B14E00;
+  background: var(--oranje-zacht);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+@media (prefers-color-scheme: dark) { .tegel-vandaag { color: var(--oranje-glow); } }
+.tegel-stand { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.tegel-open { color: var(--kop); font-weight: 700; font-size: 14px; }
+.tegel-los { color: var(--zacht); font-size: 12px; font-weight: 500; }
+.tegel-leeg { color: var(--zacht); font-size: 13px; font-weight: 500; }
+.tegel-klaar { color: var(--groen); font-weight: 700; font-size: 14px; }
+.tegel-gewerkt { color: var(--groen); font-size: 12px; font-weight: 600; }
+
 /* ---------- lijst met dingen ---------- */
 
 .dagkop { display: flex; align-items: baseline; justify-content: space-between; margin: 6px 0 10px; gap: 10px; }
@@ -160,6 +227,10 @@ h1, h2, h3 { color: var(--kop); margin: 0; }
 .regel.klaar { opacity: 0.55; }
 .regel.klaar .tekst { text-decoration: line-through; }
 .regel.telaat { background: var(--oranje-zacht); }
+
+/* een gewerkt-regel is een terugblik, geen afgestreepte taak: rustig groen, geen streep */
+.regel.soort-gewerkt { border-left-color: var(--groen); opacity: 1; }
+.regel.soort-gewerkt .tekst { text-decoration: none; color: var(--tekst); }
 
 .vinkje {
   flex: 0 0 auto;
@@ -197,6 +268,7 @@ h1, h2, h3 { color: var(--kop); margin: 0; }
   .label.oranje { color: var(--oranje-glow); border-color: #4A3A28; }
 }
 .label.agenda { background: var(--navy); color: #fff; border-color: var(--navy); }
+.label.groen { background: var(--groen-zacht); color: var(--groen); border-color: var(--groen-zacht); }
 
 .commando {
   font-family: ui-monospace, Menlo, monospace;
@@ -411,30 +483,45 @@ textarea { min-height: 110px; resize: vertical; }
   left: 0; right: 0; bottom: 0;
   z-index: 30;
   background: var(--navy);
-  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
 }
-.voet .rek { flex: 1 1 auto; min-width: 0; color: #fff; font-size: 14px; font-weight: 600; }
-.voet .rek small { display: block; color: var(--oranje-glow); font-size: 12px; }
+.voetrij { display: flex; align-items: center; gap: 10px; }
+.voetrij.zacht { justify-content: flex-end; }
+.voet .rek { flex: 1 1 auto; min-width: 0; }
+.voetstatus { color: rgba(255, 255, 255, 0.75); font-size: 13px; font-weight: 500; }
+.voetstatus strong { color: rgba(255, 255, 255, 0.9); font-weight: 600; }
+.voetstatus.vol strong { color: #fff; font-weight: 700; }
+.voetstatus small { color: var(--oranje-glow); font-size: 12px; }
 
-.plusknop {
-  position: fixed;
-  right: 16px;
-  bottom: calc(84px + env(safe-area-inset-bottom));
-  z-index: 25;
-  width: 60px;
-  height: 60px;
+/* De plusknop zit ín de balk: hij kan dus nooit ergens achter wegvallen. */
+.voet-plus {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   border: 0;
   background: var(--oranje);
   color: #fff;
-  font-size: 30px;
+  font-size: 28px;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3);
 }
+.voet-plus:active { transform: translateY(1px); }
+.voet-plus:disabled { opacity: 0.4; cursor: default; }
+
+/* Doorsturen brandt fel zodra er iets klaarstaat. */
+.knop.gloei { animation: gloei 1.6s ease-in-out infinite; }
+@keyframes gloei {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 111, 0, 0.65); }
+  50% { box-shadow: 0 0 0 9px rgba(255, 111, 0, 0); }
+}
+
+/* Op de telefoon staan de meldingen bóven de balk, nooit erachter. */
+body.telefoon .melding { bottom: calc(210px + env(safe-area-inset-bottom)); }
 
 /* opnemen */
 .opnemen { display: flex; align-items: center; gap: 14px; }

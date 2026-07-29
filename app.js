@@ -16,12 +16,13 @@ const MAANDEN = ["januari", "februari", "maart", "april", "mei", "juni", "juli",
   "augustus", "september", "oktober", "november", "december"];
 const KORT = { maandag: "ma", dinsdag: "di", woensdag: "wo", donderdag: "do", vrijdag: "vr", zaterdag: "za", zondag: "zo" };
 
-const SOORT_LANG = { v: "vast", t: "taak", a: "afspraak", e: "extra" };
+const SOORT_LANG = { v: "vast", t: "taak", a: "afspraak", e: "extra", g: "gewerkt" };
 
 let MODUS = "telefoon";   // wordt "mac" als het programmaatje op deze Mac antwoordt
 let STAND = null;         // alles wat de Mac-kant weet
 let PLAN = null;          // de weekplanning
 let DAG = null;           // welke dag staat er open ("vrij" voor "nog geen dag")
+let SCHERM = "week";      // telefoon: "week" (de dagtegels) of "dag" (één dag open)
 let HELEWEEK = false;     // hele week naast elkaar (breed scherm)
 let WACHTRIJ = [];        // telefoon: wat nog doorgestuurd moet worden
 let BEZIG = "";           // tekst van een klus die even duurt (agenda ophalen bijv.)
@@ -213,6 +214,7 @@ function grootItem(k) {
     wie: k.w || "", uiterlijk: k.x || "", typ: k.c || "",
     duur: k.n || 0,
     klaar: k.k ? vandaagIso() : "", telaat: !!k.l,
+    gewerkt_min: k.h || 0,
     reacties: [],
   };
 }
@@ -251,6 +253,7 @@ async function neemCodeOver(hash) {
     localStorage.removeItem(SLEUTEL_DELEN);
     PLAN = plan;
     DAG = null;
+    SCHERM = "week";
     meld("De weekplanning staat op je telefoon.", "goed");
     return true;
   } catch (e) {
@@ -277,6 +280,7 @@ async function start() {
   if (MODUS === "mac") {
     await haalStand();
   } else {
+    document.body.classList.add("telefoon");
     await laadWachtrij();
     PLAN = bewaardPlan();
     bewaarAppOpApparaat();
@@ -328,8 +332,20 @@ function teken() {
 
   tekenBalkknoppen();
   tekenSeintjes();
-  tekenDagchips();
-  if (HELEWEEK) tekenWeekraster(); else tekenDag();
+  if (MODUS === "telefoon") {
+    // Op de telefoon: eerst de week als dagtegels; tik op een dag en je zit erin,
+    // met bovenin knopjes om meteen naar een andere dag te springen.
+    if (SCHERM === "week") {
+      $("dagchips").innerHTML = "";
+      tekenWeektegels();
+    } else {
+      tekenTelefoonChips();
+      tekenDag();
+    }
+  } else {
+    tekenDagchips();
+    if (HELEWEEK) tekenWeekraster(); else tekenDag();
+  }
   tekenVoet();
 }
 
@@ -460,6 +476,87 @@ function itemsVan(sleutel) {
   return dag ? dag.items : [];
 }
 
+/** Wat speelt er op een dag? Voor de dagtegels en de dagknopjes. */
+function dagStand(items) {
+  const open = items.filter((i) => !i.klaar).length;
+  const afspraken = items.filter((i) => i.soort === "afspraak" && !i.klaar).length;
+  const klaar = items.filter((i) => i.klaar && i.soort !== "gewerkt").length;
+  let gewerkt = 0;
+  for (const i of items) {
+    if (i.soort === "gewerkt") gewerkt += i.duur || 0;
+    gewerkt += i.gewerkt_min || 0;
+  }
+  return { open, afspraken, klaar, gewerkt, totaal: items.length };
+}
+
+/** Het beginscherm van de telefoon: de week als dagtegels. */
+function tekenWeektegels() {
+  const vak = $("inhoud");
+  vak.innerHTML = "";
+  const nu = vandaagIso();
+  const rooster = el("div", "dagtegels");
+
+  const maakTegel = (sleutel, boven, onder, breed) => {
+    const items = itemsVan(sleutel);
+    const s = dagStand(items);
+    const t = el("button", "dagtegel" + (sleutel === nu ? " nu" : "") + (breed ? " breed" : ""));
+    const kop = el("div", "tegel-kop");
+    kop.appendChild(el("strong", null, boven));
+    if (sleutel === nu) kop.appendChild(el("span", "tegel-vandaag", "vandaag"));
+    t.appendChild(kop);
+    t.appendChild(el("small", null, onder));
+
+    const stand = el("div", "tegel-stand");
+    if (!items.length) {
+      stand.appendChild(el("span", "tegel-leeg", "niets gepland"));
+    } else if (!s.open) {
+      stand.appendChild(el("span", "tegel-klaar", "✓ alles klaar"));
+    } else {
+      stand.appendChild(el("span", "tegel-open", `${s.open} te doen`));
+      if (s.afspraken) stand.appendChild(el("span", "tegel-los", `${s.afspraken} ${s.afspraken === 1 ? "afspraak" : "afspraken"}`));
+    }
+    t.appendChild(stand);
+    if (s.gewerkt) t.appendChild(el("div", "tegel-gewerkt", `${uurTekst(s.gewerkt)} gewerkt`));
+
+    t.onclick = () => { DAG = sleutel; SCHERM = "dag"; teken(); };
+    rooster.appendChild(t);
+  };
+
+  for (const dag of PLAN.dagen) {
+    maakTegel(dag.datum, hoofdletter(dagnaamVan(dag.datum)), datumNl(dag.datum), false);
+  }
+  if ((PLAN.vrij || []).length) {
+    maakTegel("vrij", "Nog geen dag", "deze week nog inplannen", true);
+  }
+  vak.appendChild(rooster);
+}
+
+/** Bovenin het dagscherm: terug naar de week, en meteen naar een andere dag kunnen. */
+function tekenTelefoonChips() {
+  const vak = $("dagchips");
+  vak.innerHTML = "";
+  vak.classList.add("mini");
+  const nu = vandaagIso();
+
+  const terug = el("button", "dagchip terug");
+  terug.appendChild(el("strong", null, "‹"));
+  terug.appendChild(el("small", null, "week"));
+  terug.onclick = () => { SCHERM = "week"; OPEN = { id: null, modus: "" }; teken(); };
+  vak.appendChild(terug);
+
+  const maak = (sleutel, boven) => {
+    const items = itemsVan(sleutel);
+    const open = items.filter((i) => !i.klaar).length;
+    const b = el("button", "dagchip" + (DAG === sleutel ? " aan" : "") + (sleutel === nu ? " nu" : ""));
+    b.appendChild(el("strong", null, boven));
+    b.appendChild(el("small", null, open ? String(open) : "·"));
+    b.onclick = () => { DAG = sleutel; OPEN = { id: null, modus: "" }; teken(); };
+    vak.appendChild(b);
+  };
+  for (const dag of PLAN.dagen) maak(dag.datum, hoofdletter(KORT[dagnaamVan(dag.datum)]));
+  if ((PLAN.vrij || []).length || DAG === "vrij") maak("vrij", "Nog");
+}
+
 function tekenDag() {
   const vak = $("inhoud");
   vak.innerHTML = "";
@@ -536,35 +633,58 @@ function tekenGeenPlan() {
 
 function tekenVoet() {
   const voet = $("voet");
-  const plus = $("plusknop");
-  if (MODUS !== "telefoon") { voet.hidden = true; plus.hidden = true; return; }
+  if (MODUS !== "telefoon") { voet.hidden = true; return; }
   voet.hidden = false;
-  plus.hidden = !PLAN;
-  plus.onclick = () => vraagNieuw(DAG || vandaagIso());
   voet.innerHTML = "";
-  const rek = el("div", "rek");
+
+  // Eerst een eigen regel met de stand van de wachtrij; daaronder de knoppen. Zo drukt
+  // de tekst nooit tegen de knoppen aan op een smal scherm.
+  const status = el("div", "voetstatus" + (WACHTRIJ.length ? " vol" : ""));
   if (WACHTRIJ.length) {
-    rek.appendChild(document.createTextNode(`${WACHTRIJ.length} ${WACHTRIJ.length === 1 ? "ding" : "dingen"} klaar`));
-    rek.appendChild(el("small", null, "landt in je downloadmap"));
+    status.appendChild(el("strong", null, `${WACHTRIJ.length} ${WACHTRIJ.length === 1 ? "ding" : "dingen"} klaar om door te sturen`));
+    status.appendChild(el("small", null, " · landt in je downloadmap"));
   } else {
-    rek.appendChild(document.createTextNode("Niets te versturen"));
-    rek.appendChild(el("small", null, "alles is doorgegeven"));
+    status.appendChild(el("strong", null, "Niets te versturen"));
+    status.appendChild(el("small", null, " · alles is doorgegeven"));
   }
-  voet.appendChild(rek);
+  voet.appendChild(status);
+
+  // De plusknop zit ín de balk. Zo kan hij nooit meer achter de balk wegvallen,
+  // hoe vol de balk ook staat (gemeld door Erik, 29 juli 2026).
+  const rij = el("div", "voetrij");
+  const plus = el("button", "voet-plus", "+");
+  plus.title = "Iets toevoegen";
+  plus.disabled = !PLAN;
+  plus.onclick = () => {
+    if (!PLAN) return;
+    const nu = vandaagIso();
+    const doel = SCHERM === "dag" && DAG ? DAG
+      : (PLAN.dagen.some((d) => d.datum === nu) ? nu : "vrij");
+    vraagNieuw(doel);
+  };
+  rij.appendChild(plus);
+
   const memo = el("button", "knop rustig klein", "Inspreken");
   memo.onclick = () => vraagMemo(null);
-  voet.appendChild(memo);
-  const door = el("button", "knop", "Doorsturen");
+  rij.appendChild(memo);
+
+  rij.appendChild(el("div", "rek"));
+
+  const door = el("button", "knop" + (WACHTRIJ.length ? " gloei" : ""), "Doorsturen");
   door.disabled = !WACHTRIJ.length;
   door.onclick = doorsturen;
-  voet.appendChild(door);
+  rij.appendChild(door);
+  voet.appendChild(rij);
+
   // Uitwijk voor een toestel waar de downloadmap vastligt: dan alsnog het deelmenu.
   // Alleen zichtbaar als er iets klaarstaat, met woorden erbij — nooit een icoontje.
   if (WACHTRIJ.length) {
+    const onderrij = el("div", "voetrij zacht");
     const anders = el("button", "knop rustig klein", "Anders doorsturen");
     anders.title = "Met het deelmenu van je telefoon, als je downloadmap niet in te stellen is";
     anders.onclick = doorsturenViaDeelmenu;
-    voet.appendChild(anders);
+    onderrij.appendChild(anders);
+    voet.appendChild(onderrij);
   }
 }
 
@@ -583,7 +703,7 @@ function kopieer(tekst) {
  */
 /** Zelfde volgorde als op de Mac: eerst op tijd, dan afspraken/vaste punten/taken. */
 function sorteerDag(items) {
-  const rang = { afspraak: 0, vast: 1, taak: 2, extra: 3 };
+  const rang = { afspraak: 0, vast: 1, taak: 2, extra: 3, gewerkt: 4 };
   items.sort((a, b) => {
     if (!!a.klaar !== !!b.klaar) return a.klaar ? 1 : -1;
     const ta = a.tijd || "", tb = b.tijd || "";
@@ -650,6 +770,8 @@ function tekenRegel(it, dagSleutel, klein) {
     tekst.appendChild(document.createTextNode(it.tekst));
     midden.appendChild(tekst);
     const onder = el("div", "onder");
+    if (it.soort === "gewerkt") onder.appendChild(el("span", "label groen", uurTekst(it.duur || 0)));
+    if (it.gewerkt_min) onder.appendChild(el("span", "label groen", uurTekst(it.gewerkt_min) + " gewerkt"));
     if (it.telaat) onder.appendChild(el("span", "label oranje", "te laat"));
     if (it.wie && it.wie.toLowerCase() !== "erik") onder.appendChild(el("span", "label", "wacht op " + it.wie));
     if ((it.reacties || []).length) onder.appendChild(el("span", "label", `${it.reacties.length}× tekst erbij`));
@@ -659,6 +781,29 @@ function tekenRegel(it, dagSleutel, klein) {
   }
 
   const midden = el("div", "midden");
+
+  // Een gewerkt-regel is een terugblik uit je administratie: hier alleen te lezen.
+  // Aanpassen doe je in de boekhoudapp; bij "Bijwerken uit het brein" schuift hij mee.
+  if (it.soort === "gewerkt") {
+    const tekst = el("div", "tekst");
+    if (it.tijd) tekst.appendChild(el("span", "tijd", it.tijd));
+    tekst.appendChild(document.createTextNode(it.tekst));
+    midden.appendChild(tekst);
+    const onder = el("div", "onder");
+    onder.appendChild(el("span", "label groen", uurTekst(it.duur || 0)));
+    onder.appendChild(el("span", "label", "uit je administratie"));
+    midden.appendChild(onder);
+    r.appendChild(midden);
+    if (MODUS === "mac" && it.bron) {
+      const acties = el("div", "acties");
+      const weg = el("button", "knop grijs klein", "Weghalen");
+      weg.title = "Alleen uit deze week; je administratie verandert niet";
+      weg.onclick = () => gewerktWeg(it);
+      acties.appendChild(weg);
+      r.appendChild(acties);
+    }
+    return r;
+  }
 
   if (open === "bewerken") {
     // ---------- bewerken op de regel zelf ----------
@@ -742,6 +887,7 @@ function tekenRegel(it, dagSleutel, klein) {
     if (it.wie && it.wie.toLowerCase() !== "erik") onder.appendChild(el("span", "label", "wacht op " + it.wie));
     if (it.uiterlijk) onder.appendChild(el("span", "label", "uiterlijk " + datumNl(it.uiterlijk)));
     if (it.duur && it.duur !== 30) onder.appendChild(el("span", "label", it.duur + " min"));
+    if (it.gewerkt_min) onder.appendChild(el("span", "label groen", uurTekst(it.gewerkt_min) + " gewerkt"));
     if (it.typ) {
       const b = el("button", "commando", it.typ);
       b.title = "Tik om te kopiëren";
@@ -1411,16 +1557,27 @@ async function toonQr() {
 }
 
 function tellingVanPlan() {
-  let afspraken = 0, taken = 0, vast = 0;
+  let afspraken = 0, taken = 0, vast = 0, gewerkt = 0;
   for (const dag of PLAN.dagen.concat([{ items: PLAN.vrij || [] }])) {
     for (const it of dag.items) {
       if (it.soort === "afspraak") afspraken++;
       else if (it.soort === "vast") vast++;
+      else if (it.soort === "gewerkt") gewerkt++;
       else taken++;
     }
   }
   const woord = (n, e, m) => `${n} ${n === 1 ? e : m}`;
-  return `${woord(afspraken, "afspraak", "afspraken")}, ${woord(taken, "taak", "taken")} en ${woord(vast, "vast punt", "vaste punten")}`;
+  return `${woord(afspraken, "afspraak", "afspraken")}, ${woord(taken, "taak", "taken")} en ${woord(vast, "vast punt", "vaste punten")}`
+    + (gewerkt ? ` (en ${woord(gewerkt, "gewerkte uurregel", "gewerkte uurregels")} uit je administratie)` : "");
+}
+
+/** Minuten in gewone taal: 45 min, 1 uur, 1,5 uur, 2 uur 10 min. */
+function uurTekst(min) {
+  const m = Math.round(min || 0);
+  if (m < 60) return `${m} min`;
+  if (m % 60 === 0) return `${m / 60} uur`;
+  if (m % 30 === 0) return `${(m / 60).toString().replace(".", ",")} uur`;
+  return `${Math.floor(m / 60)} uur ${m % 60} min`;
 }
 
 function vraagAdres() {
@@ -1513,12 +1670,31 @@ async function andereWeek(dagen) {
 }
 
 async function bouwOpnieuw() {
-  await metBezig("Ik haal je vaste week en je open taken erbij…", async () => {
+  await metBezig("Ik haal je vaste week, je open taken en je gewerkte uren erbij…", async () => {
     const r = await fetch("/api/opnieuw" + (PLAN ? "?van=" + PLAN.van : ""), { method: "POST" });
     const data = await r.json();
     STAND = data.stand; PLAN = STAND.plan;
-    meld("De planning is bijgewerkt uit het brein.", "goed");
+    const u = data.uren || {};
+    if (u.gelukt === false) {
+      meld("De planning is bijgewerkt uit het brein. Let op: " + (u.melding || "de uren konden niet mee") + ".");
+    } else if (u.tekst) {
+      meld("De planning is bijgewerkt uit het brein; " + u.tekst + ".", "goed");
+    } else {
+      meld("De planning is bijgewerkt uit het brein.", "goed");
+    }
   });
+}
+
+/** Een gewerkt-regel uit deze week halen (alleen op de Mac; de administratie blijft zoals hij is). */
+async function gewerktWeg(it) {
+  const r = await fetch("/api/gewerkt-weg" + (PLAN ? "?van=" + PLAN.van : ""), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bron: it.bron }),
+  });
+  const data = await r.json();
+  if (data.stand) { STAND = data.stand; PLAN = STAND.plan; }
+  teken();
+  meld(data.melding || data.fout || "Klaar.", data.fout ? "fout" : "goed");
 }
 
 /** Klusje dat even duurt: zichtbaar maken dat hij bezig is, knoppen even op slot. */
