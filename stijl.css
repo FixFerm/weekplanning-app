@@ -407,6 +407,14 @@ body.telefoon .app { padding-bottom: 200px; }
 .melding.fout { background: #8C2F1B; }
 .melding.goed { background: #1F5B3A; }
 
+/* het "klaargezet"-bericht in het paneel Naar mijn telefoon */
+.klaargezet {
+  background: var(--groen-zacht);
+  color: var(--groen);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
 /* ---------- panelen (eigen venstertjes, nooit die van de browser) ---------- */
 
 dialog {

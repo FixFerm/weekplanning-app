@@ -276,6 +276,60 @@ async function neemCodeOver(hash) {
   }
 }
 
+// ---------- de weekplanning uit een bestandje halen (Mac → NAS → telefoon) ----------
+
+/** Dezelfde route als Doorsturen, maar dan andersom: de Mac zet "Weekplanning voor
+ *  telefoon.txt" in de postbus op de NAS, Synology Drive brengt hem naar de map
+ *  Postbus FixFerm op dit toestel, en hier pak je hem op. Geen groottegrens, geen
+ *  scannen — dit is sinds 7 augustus 2026 de gewone weg; de QR-code is de uitwijk. */
+function binnenhalenVanMac() {
+  const invoer = document.createElement("input");
+  invoer.type = "file";
+  invoer.accept = ".txt,text/plain,application/json";
+  invoer.onchange = async () => {
+    const bestand = invoer.files && invoer.files[0];
+    if (bestand) await neemPlanBestandOver(bestand);
+  };
+  invoer.click();
+}
+
+/** "2026-08-07 08:12" → "donderdag om 08:12", zodat je ziet hoe vers de planning is. */
+function wanneerTekst(gemaakt) {
+  const m = String(gemaakt || "").match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/);
+  if (!m) return "";
+  return `${dagnaamVan(m[1])} om ${m[2]}`;
+}
+
+/** Leest het gekozen bestand en zet de week op dit toestel. Herkennen doen we aan de
+ *  INHOUD, nooit aan de naam — pak je per ongeluk een verkeerd bestand, dan zeggen we
+ *  eerlijk welk bestand je wél moet hebben. */
+async function neemPlanBestandOver(bestand) {
+  let data = null;
+  try { data = JSON.parse(await bestand.text()); } catch { data = null; }
+  if (!data || data.soort !== "aibrein-plan" || !data.pakket) {
+    if (data && data.soort === "aibrein-post") {
+      meld("Dit is een pakketje ván je telefoon, niet je planning. Pak in je map Postbus FixFerm het bestand \"Weekplanning voor telefoon\".", "fout");
+    } else {
+      meld("Dit bestand is geen weekplanning. Pak in je map Postbus FixFerm het bestand \"Weekplanning voor telefoon\".", "fout");
+    }
+    return;
+  }
+  try {
+    const plan = pakketNaarPlan(data.pakket);
+    bewaarPlan(plan);
+    localStorage.removeItem(SLEUTEL_DELEN);
+    PLAN = plan;
+    TODO = PLAN.todo = PLAN.todo || [];
+    DAG = null;
+    SCHERM = "week";
+    teken();
+    const wanneer = wanneerTekst(data.gemaakt);
+    meld(`Je weekplanning staat op je telefoon${wanneer ? " (klaargezet " + wanneer + ")" : ""}.`, "goed");
+  } catch (e) {
+    meld("Dit bestand kon ik niet lezen (" + String(e.message || e).slice(0, 40) + ").", "fout");
+  }
+}
+
 // ---------- opstarten ----------
 
 async function start() {
@@ -380,7 +434,7 @@ function tekenBalkknoppen() {
     if (PLAN) {
       knop("◀", () => andereWeek(-7)).title = "Week eerder";
       knop("▶", () => andereWeek(7)).title = "Week later";
-      knop("Naar mijn telefoon", toonQr, "");
+      knop("Naar mijn telefoon", naarTelefoon, "");
     }
     knop("Agenda erbij", haalAgenda);
     if (PLAN) knop("Naar mijn agenda", naarAgenda);
@@ -394,7 +448,8 @@ function tekenBalkknoppen() {
       });
     }
   } else {
-    knop("Nieuwe week scannen", scanNieuweWeek);
+    knop("Binnenhalen van de Mac", binnenhalenVanMac, "");
+    knop("Scannen", scanNieuweWeek).title = "Een QR-code van de Mac scannen (de uitwijk)";
   }
 }
 
@@ -431,8 +486,8 @@ function tekenSeintjes() {
       seintje("De map van je telefoon (op de NAS) is nu niet bereikbaar. Zodra hij er weer is, kun je binnenhalen.", [], true);
     }
     if (STAND.laatst_gescand && STAND.laatst_gescand !== STAND.stempel) {
-      seintje("De planning is veranderd sinds je hem voor het laatst op je telefoon hebt gezet. Laat een nieuwe code scannen als je telefoon bij wil zijn.",
-        [{ tekst: "Nieuwe code", doe: toonQr }]);
+      seintje("De planning is veranderd sinds je hem voor het laatst naar je telefoon hebt gestuurd. Zet hem opnieuw klaar als je telefoon bij wil zijn.",
+        [{ tekst: "Opnieuw klaarzetten", doe: naarTelefoon }]);
     }
     if (STAND.memos_in_inbox) {
       const n = STAND.memos_in_inbox;
@@ -462,8 +517,8 @@ function tekenSeintjes() {
     const nu = vandaagIso();
     const eind = PLAN.dagen[6] ? PLAN.dagen[6].datum : PLAN.van;
     if (nu > eind) {
-      seintje("Deze planning is van een week die voorbij is. Scan op de Mac de nieuwe code van deze week.",
-        [{ tekst: "Scannen", doe: scanNieuweWeek }]);
+      seintje("Deze planning is van een week die voorbij is. Zet op de Mac de nieuwe week klaar (knop \"Naar mijn telefoon\") en haal hem hier binnen.",
+        [{ tekst: "Binnenhalen van de Mac", doe: binnenhalenVanMac }]);
     }
   }
 }
@@ -813,7 +868,7 @@ function tekenGeenPlan() {
       "Er is voor deze week nog geen planning. Druk op \"Bijwerken uit het brein\": dan zet ik je vaste week en je open taken erin. Daarna kun je de agenda erbij halen."));
   } else {
     kaart.appendChild(el("div", "rek",
-      "Er staat nog geen planning op dit toestel. Laat op de Mac de code zien en scan die met je camera, of tik hierboven op \"Nieuwe week scannen\"."));
+      "Er staat nog geen planning op dit toestel. Druk op de Mac op \"Naar mijn telefoon\" en tik daarna hierboven op \"Binnenhalen van de Mac\": je pakt dan het bestand \"Weekplanning voor telefoon\" uit je map Postbus FixFerm. Scannen met een code kan ook nog steeds."));
   }
   vak.appendChild(kaart);
 }
@@ -1641,7 +1696,51 @@ function kanDelen(bestand) {
   }
 }
 
-// ---------- de QR-code (Mac) ----------
+// ---------- naar de telefoon (Mac) ----------
+
+/** De gewone weg sinds 7 augustus 2026: de week als bestandje via de NAS. De dienst
+ *  haalt eerst binnen wat er nog van de telefoon klaarstond (anders zouden afgevinkte
+ *  dingen weer open lijken te staan) en zet dan de verse stand klaar. Lukt de NAS-weg
+ *  niet, dan valt hij eerlijk terug op de QR-code. */
+async function naarTelefoon() {
+  if (!STAND) return;
+  await metBezig("Ik haal eerst binnen wat er nog van je telefoon klaarstaat (een ingesproken memo uittypen duurt een halve minuut) en zet dan je week klaar op de NAS…", async () => {
+    const r = await fetch("/api/naar-telefoon" + (PLAN ? "?van=" + PLAN.van : ""), { method: "POST" });
+    const data = await r.json();
+    if (data.stand) { STAND = data.stand; PLAN = STAND.plan; TODO = STAND.todo || []; }
+    if (!data.gelukt) {
+      meld(data.melding || "Klaarzetten op de NAS lukte niet. Dan maar met de code.", "fout");
+      toonQr();
+      return;
+    }
+    toonKlaargezet(data);
+  });
+}
+
+/** Vertelt dat de week klaarstaat en wat je op je telefoon doet. De QR-code blijft
+ *  bereikbaar achter een knop met woorden — als uitwijk, en om de app de eerste keer
+ *  op een telefoon te zetten. */
+function toonKlaargezet(data) {
+  const vak = el("div");
+  const status = el("p", "klaargezet");
+  status.appendChild(el("strong", null, "✓ Klaargezet. "));
+  status.appendChild(document.createTextNode(
+    `Je week staat als bestandje op de NAS ("${data.bestand || "Weekplanning voor telefoon.txt"}").`));
+  vak.appendChild(status);
+  if (data.binnengehaald_samenvatting) {
+    vak.appendChild(el("p", null, `Eerst nog van je telefoon binnengehaald: ${data.binnengehaald_samenvatting}.`));
+  }
+  vak.appendChild(el("p", null,
+    "Op je telefoon: open de app en druk op \"Binnenhalen van de Mac\", dan pak je het bestand uit je map Postbus FixFerm. "
+    + "Synology Drive brengt het erheen; meestal staat het er binnen een minuut. "
+    + "Duurt het langer, open dan even de Synology Drive-app op je telefoon — die haalt het dan meteen op."));
+  const uitwijk = el("button", "knop grijs klein", "Liever scannen, of de app voor het eerst op een telefoon zetten?");
+  uitwijk.onclick = () => { $("paneel").close(); toonQr(); };
+  vak.appendChild(uitwijk);
+  paneel("Naar mijn telefoon", `week ${PLAN.week}, stand van nu`, vak, []);
+}
+
+// ---------- de QR-code (Mac, de uitwijk) ----------
 
 async function toonQr() {
   if (!STAND) return;
